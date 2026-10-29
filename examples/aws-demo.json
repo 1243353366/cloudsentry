@@ -1,0 +1,19 @@
+{
+  "demo": true,
+  "Records": [
+    {
+      "eventVersion": "1.11",
+      "eventID": "synthetic-aws-event-001",
+      "simulation": true,
+      "eventTime": "2026-01-15T10:30:00Z",
+      "eventSource": "cloudtrail.amazonaws.com",
+      "eventName": "StopLogging",
+      "awsRegion": "us-east-1",
+      "sourceIPAddress": "192.0.2.42",
+      "userIdentity": {
+        "type": "IAMUser",
+        "principalId": "SYNTHETIC"
+      }
+    }
+  ]
+}

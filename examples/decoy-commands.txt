@@ -1,0 +1,11 @@
+whoami
+id
+uname
+pwd
+ls
+cat credentials.txt
+ps
+ss
+touch session-ready
+ls
+exit

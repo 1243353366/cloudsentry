@@ -1,0 +1,26 @@
+{
+  "demo": true,
+  "result": [
+    {
+      "id": "synthetic-cloudflare-event-001",
+      "simulation": true,
+      "action": {
+        "type": "update",
+        "description": "Firewall configuration",
+        "time": "2026-01-15T10:30:00Z",
+        "result": "success"
+      },
+      "actor": {
+        "id": "synthetic-actor",
+        "email": "demo-user@example.invalid",
+        "ip_address": "198.51.100.42",
+        "type": "user"
+      },
+      "resource": {
+        "id": "synthetic-firewall-rule",
+        "product": "firewall",
+        "type": "rule"
+      }
+    }
+  ]
+}

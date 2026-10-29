@@ -1,0 +1,538 @@
+"""Bounded inbound-only transport for the virtual decoy terminal.
+
+This module intentionally depends only on the virtual simulator and the Python
+standard library.  It never invokes a host shell, opens an outbound connection,
+or writes audit files.  Socket peer metadata and timestamps describe a real
+observed inbound interaction; only terminal responses and virtual session
+effects are synthetic.
+"""
+from __future__ import annotations
+
+import argparse
+import asyncio
+from collections import deque
+from datetime import datetime, timezone
+import hashlib
+import ipaddress
+import json
+import os
+import sys
+from typing import Any, Deque, Optional
+import uuid
+
+from .simulator import DecoySession, display_safe
+
+
+_READ_LIMIT = 4096
+_WRITE_TIMEOUT = 1.0
+_CONFIG_LIMITS = {
+    "max_sessions": (1, 64),
+    "max_commands": (1, 100),
+    "idle_timeout": (1, 300),
+    "session_timeout": (1, 3600),
+    "max_sessions_total": (1, 100),
+    "audit_limit": (1, 1000),
+}
+_MAX_RUNTIME_SECONDS = 3600.0
+
+
+def _utc_timestamp() -> str:
+    """Return an explicitly UTC timestamp suitable for a machine audit record."""
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _require_int(name: str, value: int) -> int:
+    """Validate a deliberately small, finite configuration range."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{name} must be an integer")
+    minimum, maximum = _CONFIG_LIMITS[name]
+    if not minimum <= value <= maximum:
+        raise ValueError(f"{name} must be between {minimum} and {maximum}")
+    return value
+
+
+def _require_runtime(value: float) -> float:
+    """Accept a finite service lifetime; tests may use a sub-second value."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("max_runtime must be a number of seconds")
+    runtime = float(value)
+    if not 0.0 < runtime <= _MAX_RUNTIME_SECONDS:
+        raise ValueError("max_runtime must be greater than 0 and at most 3600")
+    return runtime
+
+
+def _loopback_host(host: str) -> bool:
+    """Accept only literal loopback addresses (plus the conventional localhost)."""
+    if not isinstance(host, str) or not host:
+        return False
+    if host.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        # Do not resolve arbitrary names merely to decide whether public binding
+        # was requested.  That keeps the safe default deterministic.
+        return False
+
+
+class DecoyServer:
+    """Serve independent, in-memory :class:`DecoySession` objects over TCP.
+
+    Every accepted TCP connection is counted against ``max_sessions_total``;
+    capacity-rejected connections count as well.  Audit entries contain only
+    observed connection metadata and command hashes/normalized verbs.  The
+    observed peer is not identified as an attacker and no remote operating
+    system is inferred from the selected presentation persona.  Records are
+    emitted as one JSON object per line on stderr, never to a disk file.
+    """
+
+    def __init__(
+        self,
+        max_sessions: int = 8,
+        max_commands: int = 100,
+        idle_timeout: int = 20,
+        session_timeout: int = 120,
+        max_sessions_total: int = 100,
+        audit_limit: int = 1000,
+        persona: str = "linux",
+        max_runtime: float = 600,
+    ) -> None:
+        self.max_sessions = _require_int("max_sessions", max_sessions)
+        self.max_commands = _require_int("max_commands", max_commands)
+        self.idle_timeout = _require_int("idle_timeout", idle_timeout)
+        self.session_timeout = _require_int("session_timeout", session_timeout)
+        self.max_sessions_total = _require_int("max_sessions_total", max_sessions_total)
+        self.audit_limit = _require_int("audit_limit", audit_limit)
+        self.max_runtime = _require_runtime(max_runtime)
+        if persona not in {"linux", "windows"}:
+            raise ValueError("persona must be linux or windows")
+        self.persona = persona
+
+        # This public deque is bounded even if callers retain the server object.
+        self.audit: Deque[dict[str, Any]] = deque(maxlen=self.audit_limit)
+        self._server: Optional[asyncio.Server] = None
+        self._client_tasks: set[asyncio.Task[None]] = set()
+        self._active_sessions: dict[str, asyncio.StreamWriter] = {}
+        self._connection_count = 0
+        self._audit_exhausted = False
+        self._shutdown_requested = False
+        self._shutdown_reason = ""
+        self._runtime_expired = False
+        self._runtime_task: Optional[asyncio.Task[None]] = None
+
+    @property
+    def server(self) -> Optional[asyncio.Server]:
+        """The current listening server, or ``None`` before :meth:`start`."""
+        return self._server
+
+    @property
+    def active_sessions(self) -> int:
+        """Number of active virtual sessions, excluding immediately rejected peers."""
+        return len(self._active_sessions)
+
+    @property
+    def connection_count(self) -> int:
+        """Lifetime TCP connection attempts observed by this server instance."""
+        return self._connection_count
+
+    async def start(
+        self,
+        host: str = "127.0.0.1",
+        port: int = 8022,
+        allow_public: bool = False,
+    ) -> asyncio.Server:
+        """Begin listening, refusing non-loopback binding without explicit opt-in."""
+        if not isinstance(allow_public, bool):
+            raise ValueError("allow_public must be a boolean")
+        if not allow_public and not _loopback_host(host):
+            raise ValueError("non-loopback binding requires allow_public=True")
+        if isinstance(port, bool) or not isinstance(port, int) or not 0 <= port <= 65535:
+            raise ValueError("port must be an integer between 0 and 65535")
+        if self._server is not None and self._server.is_serving():
+            raise RuntimeError("server is already listening")
+        if self._connection_count >= self.max_sessions_total:
+            raise RuntimeError("lifetime connection quota has already been exhausted")
+        if self._runtime_expired:
+            raise RuntimeError("service runtime has already expired; create a new server")
+
+        self._shutdown_requested = False
+        self._shutdown_reason = ""
+        self._server = await asyncio.start_server(
+            self._client_connected,
+            host=host,
+            port=port,
+            limit=_READ_LIMIT,
+            backlog=self.max_sessions,
+        )
+        self._runtime_task = asyncio.create_task(self._runtime_guard())
+        return self._server
+
+    async def shutdown(self) -> None:
+        """Stop accepting peers and cancel remaining handlers for deterministic cleanup."""
+        self._begin_shutdown("operator_shutdown")
+        if self._server is not None:
+            await self._server.wait_closed()
+
+        current = asyncio.current_task()
+        runtime_task = self._runtime_task
+        if runtime_task is not None and runtime_task is not current and not runtime_task.done():
+            runtime_task.cancel()
+            await asyncio.gather(runtime_task, return_exceptions=True)
+        if runtime_task is not current:
+            self._runtime_task = None
+
+        tasks = [
+            task for task in tuple(self._client_tasks)
+            if task is not current and not task.done()
+        ]
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._active_sessions.clear()
+
+    async def close(self) -> None:
+        """Alias for :meth:`shutdown` for callers using server-style cleanup."""
+        await self.shutdown()
+
+    def _close_listener(self) -> None:
+        """Immediately make the listening socket unavailable without waiting on peers."""
+        if self._server is not None:
+            self._server.close()
+
+    def _begin_shutdown(self, reason: str) -> None:
+        """Stop the service without leaving active virtual sessions resident."""
+        if self._shutdown_requested:
+            return
+        self._shutdown_requested = True
+        self._shutdown_reason = reason
+        self._close_listener()
+        for writer in tuple(self._active_sessions.values()):
+            writer.close()
+
+    async def _runtime_guard(self) -> None:
+        """End this server instance after its finite, non-restarting service lifetime."""
+        try:
+            await asyncio.sleep(self.max_runtime)
+        except asyncio.CancelledError:
+            return
+        self._runtime_expired = True
+        self._begin_shutdown("service_runtime_limit")
+
+    def _begin_audit_shutdown(self) -> None:
+        """Close listener and active transports as soon as the audit budget is full."""
+        if self._audit_exhausted:
+            return
+        self._audit_exhausted = True
+        self._begin_shutdown("audit_limit")
+        runtime_task = self._runtime_task
+        if runtime_task is not None and not runtime_task.done():
+            runtime_task.cancel()
+
+    def _audit_event(
+        self,
+        event_type: str,
+        session_id: str,
+        peer_ip: str,
+        **details: Any,
+    ) -> bool:
+        """Append and emit one bounded, non-sensitive audit record.
+
+        ``False`` means the final audit record has been emitted and no further
+        session work should be performed.  No event is emitted after the cap.
+        """
+        if self._audit_exhausted:
+            return False
+        event: dict[str, Any] = {
+            "timestamp_utc": _utc_timestamp(),
+            "simulation": True,
+            "simulation_scope": "terminal_response_and_virtual_session_effects",
+            "source_kind": "decoy_service_interaction",
+            "interaction_observed": True,
+            "event_type": event_type,
+            "session_id": session_id,
+            "peer_ip": peer_ip,
+            "peer_ip_source": "socket_peer_observed",
+            "peer_ip_verified": False,
+            "attacker_identity": "unknown",
+            "attacker_identity_inferred": False,
+            "remote_os": "unknown",
+            "os_inferred": False,
+        }
+        event.update(details)
+        self.audit.append(event)
+        # Compact JSON ensures each audit event remains one machine-readable line
+        # on stderr.  There is intentionally no file output option.
+        try:
+            sys.stderr.write(json.dumps(event, sort_keys=True, separators=(",", ":")) + "\n")
+            sys.stderr.flush()
+        except (OSError, ValueError):
+            # Preserve visibility: stop accepting work if the operator sink fails.
+            self._audit_exhausted = True
+            self._begin_shutdown("operator_audit_failure")
+            return False
+        if len(self.audit) >= self.audit_limit:
+            self._begin_audit_shutdown()
+            return False
+        return True
+
+    @staticmethod
+    def _observed_peer_ip(writer: asyncio.StreamWriter) -> str:
+        """Get only the socket-provided address, without DNS or identity inference."""
+        peer = writer.get_extra_info("peername")
+        if isinstance(peer, tuple) and peer:
+            return display_safe(str(peer[0]))
+        if isinstance(peer, str):
+            return display_safe(peer)
+        return "unknown"
+
+    @staticmethod
+    def _audit_verb(command: str) -> str:
+        """Record an allowed verb or a neutral category, never a caller-supplied token."""
+        token = command.strip().split(None, 1)[0].lower() if command.strip() else "empty"
+        return token if token in DecoySession.allowed_verbs else "unsupported"
+
+    @staticmethod
+    async def _safe_write(writer: asyncio.StreamWriter, text: str) -> bool:
+        """Write bounded, control-safe terminal text without an unbounded drain wait."""
+        if writer.is_closing():
+            return False
+        try:
+            writer.write(display_safe(text).encode("utf-8", errors="replace"))
+            await asyncio.wait_for(writer.drain(), timeout=_WRITE_TIMEOUT)
+            return True
+        except (ConnectionError, OSError, asyncio.TimeoutError):
+            return False
+
+    @staticmethod
+    async def _finish_writer(writer: asyncio.StreamWriter) -> None:
+        """Close a peer transport, bounding cleanup in case its peer disappears."""
+        writer.close()
+        try:
+            await asyncio.wait_for(writer.wait_closed(), timeout=_WRITE_TIMEOUT)
+        except (ConnectionError, OSError, asyncio.TimeoutError):
+            pass
+
+    async def _reject(
+        self,
+        writer: asyncio.StreamWriter,
+        session_id: str,
+        peer_ip: str,
+        reason: str,
+    ) -> None:
+        """Reject an over-quota connection before creating a virtual terminal."""
+        await self._safe_write(writer, "Maintenance console unavailable.\n")
+        self._audit_event("close", session_id, peer_ip, reason=reason)
+        await self._finish_writer(writer)
+
+    async def _client_connected(
+        self,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+    ) -> None:
+        """Account for an inbound TCP peer and contain it to one finite session."""
+        task = asyncio.current_task()
+        if task is not None:
+            self._client_tasks.add(task)
+        session_id = str(uuid.uuid4())
+        peer_ip = self._observed_peer_ip(writer)
+        try:
+            self._connection_count += 1
+            if not self._audit_event("connecting", session_id, peer_ip):
+                await self._finish_writer(writer)
+                return
+
+            # The connection that reaches the total cap can complete; close the
+            # listening socket immediately so no later session is intentionally
+            # admitted.  Rejected capacity peers count toward this same quota.
+            if self._connection_count >= self.max_sessions_total:
+                self._close_listener()
+            if self._connection_count > self.max_sessions_total:
+                await self._reject(writer, session_id, peer_ip, "lifetime_connection_limit")
+                return
+            if self._shutdown_requested:
+                await self._reject(writer, session_id, peer_ip, "server_shutdown")
+                return
+            if self.active_sessions >= self.max_sessions:
+                await self._reject(writer, session_id, peer_ip, "active_session_limit")
+                return
+
+            self._active_sessions[session_id] = writer
+            close_reason = "completed"
+            try:
+                close_reason = await asyncio.wait_for(
+                    self._serve_session(reader, writer, session_id, peer_ip),
+                    timeout=self.session_timeout,
+                )
+            except asyncio.TimeoutError:
+                close_reason = "session_timeout"
+                await self._safe_write(writer, "Session time limit reached.\n")
+            except asyncio.CancelledError:
+                close_reason = "server_shutdown"
+                raise
+            finally:
+                if self._shutdown_requested and self._shutdown_reason:
+                    close_reason = self._shutdown_reason
+                self._active_sessions.pop(session_id, None)
+                self._audit_event("close", session_id, peer_ip, reason=close_reason)
+                await self._finish_writer(writer)
+        finally:
+            if task is not None:
+                self._client_tasks.discard(task)
+
+    async def _serve_session(
+        self,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+        session_id: str,
+        peer_ip: str,
+    ) -> str:
+        """Run a finite virtual session under its caller's fixed lifetime deadline."""
+        session = DecoySession(persona=self.persona, presentation="realistic")
+        if not await self._safe_write(writer, session.banner + session.prompt):
+            return "write_failure"
+
+        command_times: Deque[float] = deque()
+        command_count = 0
+        loop = asyncio.get_running_loop()
+        while not self._shutdown_requested:
+            try:
+                line = await asyncio.wait_for(reader.readline(), timeout=self.idle_timeout)
+            except asyncio.TimeoutError:
+                await self._safe_write(writer, "Session idle timeout.\n")
+                return "idle_timeout"
+            except (ValueError, asyncio.LimitOverrunError):
+                # StreamReader has already discarded/limited the overlong line.
+                # Do not retain or hash any portion of it.
+                await self._safe_write(writer, "Input too long.\n")
+                return "input_limit"
+
+            if not line:
+                return "client_disconnect"
+            if len(line) > _READ_LIMIT:
+                await self._safe_write(writer, "Input too long.\n")
+                return "input_limit"
+
+            # Preserve exact command bytes for the hash while removing only the
+            # terminal line separator before virtual execution.
+            raw_bytes = line[:-1] if line.endswith(b"\n") else line
+            if raw_bytes.endswith(b"\r"):
+                raw_bytes = raw_bytes[:-1]
+            command = raw_bytes.decode("utf-8", errors="replace")
+            now = loop.time()
+            while command_times and now - command_times[0] >= 1.0:
+                command_times.popleft()
+            if len(command_times) >= 10:
+                self._audit_event(
+                    "command",
+                    session_id,
+                    peer_ip,
+                    command_sha256=hashlib.sha256(raw_bytes).hexdigest(),
+                    verb=self._audit_verb(command),
+                    blocked=True,
+                    reason="command_rate_limit",
+                )
+                await self._safe_write(writer, "Command rate limit reached.\n")
+                return "command_rate_limit"
+            command_times.append(now)
+            command_count += 1
+
+            output = session.execute(command)
+            virtual_event = session.events[-1]
+            if not self._audit_event(
+                "command",
+                session_id,
+                peer_ip,
+                command_sha256=hashlib.sha256(raw_bytes).hexdigest(),
+                verb=self._audit_verb(command),
+                blocked=virtual_event["blocked"],
+                reason=virtual_event["reason"],
+                output_sha256=virtual_event["output_sha256"],
+            ):
+                return "audit_limit"
+            if not await self._safe_write(writer, output):
+                return "write_failure"
+            if session.closed:
+                return "visitor_exit"
+            if command_count >= self.max_commands:
+                await self._safe_write(writer, "Command quota reached.\n")
+                return "command_limit"
+            if not await self._safe_write(writer, session.prompt):
+                return "write_failure"
+        return "server_shutdown"
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Run the bounded virtual maintenance-console decoy."
+    )
+    parser.add_argument("--host", default="127.0.0.1", help="bind host (loopback by default)")
+    parser.add_argument("--port", type=int, default=8022, help="TCP port (0 permits an ephemeral port)")
+    parser.add_argument(
+        "--allow-public",
+        action="store_true",
+        help="explicitly permit a non-loopback bind",
+    )
+    parser.add_argument("--persona", choices=("linux", "windows"), default="linux")
+    parser.add_argument("--max-sessions", type=int, default=8)
+    parser.add_argument("--max-commands", type=int, default=100)
+    parser.add_argument("--idle-timeout", type=int, default=20)
+    parser.add_argument("--session-timeout", type=int, default=120)
+    parser.add_argument("--max-sessions-total", type=int, default=100)
+    parser.add_argument("--audit-limit", type=int, default=1000)
+    parser.add_argument(
+        "--max-runtime",
+        type=int,
+        default=600,
+        help="whole-service lifetime in seconds (1 through 3600)",
+    )
+    return parser
+
+
+async def _run_from_args(args: argparse.Namespace) -> int:
+    service = DecoyServer(
+        max_sessions=args.max_sessions,
+        max_commands=args.max_commands,
+        idle_timeout=args.idle_timeout,
+        session_timeout=args.session_timeout,
+        max_sessions_total=args.max_sessions_total,
+        audit_limit=args.audit_limit,
+        persona=args.persona,
+        max_runtime=args.max_runtime,
+    )
+    server = await service.start(
+        host=args.host,
+        port=args.port,
+        allow_public=args.allow_public,
+    )
+    try:
+        await server.serve_forever()
+    except asyncio.CancelledError:
+        # Closing a server from a bounded quota can cancel serve_forever().
+        if not service._shutdown_requested and not service._audit_exhausted:
+            raise
+    finally:
+        await service.shutdown()
+    return 0
+
+
+def main(argv: Optional[list[str]] = None) -> int:
+    """Parse CLI arguments and run until shutdown or a configured finite quota closes."""
+    parser = _parser()
+    args = parser.parse_args(argv)
+    credential_names = {"CLOUDFLARE_API_TOKEN", "RENDER_API_KEY", "RAILWAY_API_TOKEN",
+                        "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
+                        "GOOGLE_APPLICATION_CREDENTIALS", "GH_TOKEN", "GITHUB_TOKEN", "OPENAI_API_KEY"}
+    if credential_names.intersection(os.environ):
+        parser.error("credential-bearing environment refused; use the clean-environment scripts/start-honeypot.sh launcher")
+    try:
+        return asyncio.run(_run_from_args(args))
+    except ValueError as exc:
+        parser.error(str(exc))
+    except KeyboardInterrupt:
+        return 130
+    return 2  # pragma: no cover - parser.error always exits
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

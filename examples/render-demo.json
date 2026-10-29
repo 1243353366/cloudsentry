@@ -1,0 +1,16 @@
+{
+  "demo": true,
+  "events": [
+    {
+      "simulation": true,
+      "timestamp": "2026-01-15T10:30:00Z",
+      "actor": "demo-user@example.invalid",
+      "event": "StartShellEvent",
+      "status": "success",
+      "metadata": {
+        "service": "synthetic-service",
+        "source_ip": "203.0.113.42"
+      }
+    }
+  ]
+}

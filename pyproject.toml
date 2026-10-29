@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "reverse-shell-decoy"
+version = "0.1.0"
+description = "Read-only reverse-shell suspicion detector, networkless decoy terminal, and evidence exporter"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+dependencies = []
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Topic :: Security",
+  "Operating System :: POSIX :: Linux",
+]
+
+[project.scripts]
+reverse-shell-decoy = "reverse_shell_decoy.cli:main"
+reverse-shell-decoy-service = "reverse_shell_decoy.honeypot:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
