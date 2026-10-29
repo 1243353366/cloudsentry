@@ -12,6 +12,13 @@ dist/
 *.zip
 *.json
 !examples/*-demo.json
+!portal/package.json
+!portal/tsconfig.json
+!portal/components.json
+!portal/client/public/manus-routes.json
+!portal/drizzle/meta/_journal.json
+!portal/drizzle/meta/0000_snapshot.json
+!portal/drizzle/meta/0001_snapshot.json
 *.log
 observed*.txt
 trusted*.txt

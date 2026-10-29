@@ -21,9 +21,12 @@ from typing import Any, Deque, Optional
 import uuid
 
 from .simulator import DecoySession, display_safe
+from .signals import inspect_text
 
 
 _READ_LIMIT = 4096
+_MIRROR_MAX_BYTES = 64 * 1024
+_MIRROR_MAX_CHUNKS_PER_SECOND = 10
 _WRITE_TIMEOUT = 1.0
 _CONFIG_LIMITS = {
     "max_sessions": (1, 64),
@@ -76,11 +79,11 @@ def _loopback_host(host: str) -> bool:
 
 
 class DecoyServer:
-    """Serve independent, in-memory :class:`DecoySession` objects over TCP.
+    """Serve bounded inbound console, sink, or opaque mirror sessions over TCP.
 
     Every accepted TCP connection is counted against ``max_sessions_total``;
     capacity-rejected connections count as well.  Audit entries contain only
-    observed connection metadata and command hashes/normalized verbs.  The
+    observed connection metadata and hash-only interaction details.  The
     observed peer is not identified as an attacker and no remote operating
     system is inferred from the selected presentation persona.  Records are
     emitted as one JSON object per line on stderr, never to a disk file.
@@ -96,6 +99,7 @@ class DecoyServer:
         audit_limit: int = 1000,
         persona: str = "linux",
         max_runtime: float = 600,
+        response_mode: str = "console",
     ) -> None:
         self.max_sessions = _require_int("max_sessions", max_sessions)
         self.max_commands = _require_int("max_commands", max_commands)
@@ -107,6 +111,9 @@ class DecoyServer:
         if persona not in {"linux", "windows"}:
             raise ValueError("persona must be linux or windows")
         self.persona = persona
+        if response_mode not in {"console", "sink", "mirror"}:
+            raise ValueError("response_mode must be console, sink, or mirror")
+        self.response_mode = response_mode
 
         # This public deque is bounded even if callers retain the server object.
         self.audit: Deque[dict[str, Any]] = deque(maxlen=self.audit_limit)
@@ -246,9 +253,14 @@ class DecoyServer:
         event: dict[str, Any] = {
             "timestamp_utc": _utc_timestamp(),
             "simulation": True,
-            "simulation_scope": "terminal_response_and_virtual_session_effects",
+            "simulation_scope": (
+                "bounded_echo_service_not_real_command_execution"
+                if self.response_mode == "mirror"
+                else "terminal_response_and_virtual_session_effects"
+            ),
             "source_kind": "decoy_service_interaction",
             "interaction_observed": True,
+            "response_mode": self.response_mode,
             "event_type": event_type,
             "session_id": session_id,
             "peer_ip": peer_ip,
@@ -321,7 +333,8 @@ class DecoyServer:
         reason: str,
     ) -> None:
         """Reject an over-quota connection before creating a virtual terminal."""
-        await self._safe_write(writer, "Maintenance console unavailable.\n")
+        if self.response_mode == "console":
+            await self._safe_write(writer, "Maintenance console unavailable.\n")
         self._audit_event("close", session_id, peer_ip, reason=reason)
         await self._finish_writer(writer)
 
@@ -366,7 +379,8 @@ class DecoyServer:
                 )
             except asyncio.TimeoutError:
                 close_reason = "session_timeout"
-                await self._safe_write(writer, "Session time limit reached.\n")
+                if self.response_mode == "console":
+                    await self._safe_write(writer, "Session time limit reached.\n")
             except asyncio.CancelledError:
                 close_reason = "server_shutdown"
                 raise
@@ -388,6 +402,10 @@ class DecoyServer:
         peer_ip: str,
     ) -> str:
         """Run a finite virtual session under its caller's fixed lifetime deadline."""
+        if self.response_mode == "mirror":
+            return await self._serve_mirror(reader, writer, session_id, peer_ip)
+        if self.response_mode == "sink":
+            return await self._serve_sink(reader, session_id, peer_ip)
         session = DecoySession(persona=self.persona, presentation="realistic")
         if not await self._safe_write(writer, session.banner + session.prompt):
             return "write_failure"
@@ -431,6 +449,7 @@ class DecoyServer:
                     verb=self._audit_verb(command),
                     blocked=True,
                     reason="command_rate_limit",
+                    **inspect_text(command),
                 )
                 await self._safe_write(writer, "Command rate limit reached.\n")
                 return "command_rate_limit"
@@ -448,6 +467,7 @@ class DecoyServer:
                 blocked=virtual_event["blocked"],
                 reason=virtual_event["reason"],
                 output_sha256=virtual_event["output_sha256"],
+                **inspect_text(command),
             ):
                 return "audit_limit"
             if not await self._safe_write(writer, output):
@@ -462,6 +482,131 @@ class DecoyServer:
         return "server_shutdown"
 
 
+    async def _serve_mirror(
+        self,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+        session_id: str,
+        peer_ip: str,
+    ) -> str:
+        """Echo bounded raw inbound chunks on this connection only.
+
+        Mirror mode deliberately treats the input solely as opaque bytes.  It
+        does not decode, evaluate, parse, retain, or replay the payload, and it
+        never creates another connection.  A limit violation simply closes the
+        accepted connection without adding a protocol message.
+        """
+        chunk_times: Deque[float] = deque()
+        chunk_count = 0
+        mirrored_bytes = 0
+        loop = asyncio.get_running_loop()
+
+        while not self._shutdown_requested:
+            if chunk_count >= self.max_commands:
+                return "chunk_limit"
+            try:
+                payload = await asyncio.wait_for(
+                    reader.read(_READ_LIMIT), timeout=self.idle_timeout
+                )
+            except asyncio.TimeoutError:
+                return "idle_timeout"
+            except (ValueError, asyncio.LimitOverrunError):
+                # ``read`` is explicitly bounded, but never turn malformed or
+                # overlong inbound data into a response payload.
+                return "input_limit"
+
+            if not payload:
+                return "client_disconnect"
+
+            now = loop.time()
+            while chunk_times and now - chunk_times[0] >= 1.0:
+                chunk_times.popleft()
+            payload_details = {
+                "byte_count": len(payload),
+                "chunk_sha256": hashlib.sha256(payload).hexdigest(),
+                "execution": False,
+            }
+            if len(chunk_times) >= _MIRROR_MAX_CHUNKS_PER_SECOND:
+                self._audit_event(
+                    "mirror_chunk",
+                    session_id,
+                    peer_ip,
+                    **payload_details,
+                    blocked=True,
+                    reason="chunk_rate_limit",
+                )
+                return "chunk_rate_limit"
+            if mirrored_bytes + len(payload) > _MIRROR_MAX_BYTES:
+                self._audit_event(
+                    "mirror_chunk",
+                    session_id,
+                    peer_ip,
+                    **payload_details,
+                    blocked=True,
+                    reason="byte_budget",
+                )
+                return "byte_budget"
+
+            if not self._audit_event(
+                "mirror_chunk",
+                session_id,
+                peer_ip,
+                **payload_details,
+                blocked=False,
+                reason="mirrored",
+            ):
+                return "audit_limit"
+            if writer.is_closing():
+                return "write_failure"
+            try:
+                # Payload is written unmodified to the same accepted transport;
+                # this is intentionally a 1:1 echo, including arbitrary binary.
+                writer.write(payload)
+                await asyncio.wait_for(writer.drain(), timeout=_WRITE_TIMEOUT)
+            except (ConnectionError, OSError, asyncio.TimeoutError):
+                return "write_failure"
+
+            mirrored_bytes += len(payload)
+            chunk_count += 1
+            chunk_times.append(now)
+        return "server_shutdown"
+
+
+    async def _serve_sink(self, reader: asyncio.StreamReader, session_id: str, peer_ip: str) -> str:
+        """Bounded silent input: hashes/known verbs only; no interpreter or replay."""
+        command_times: Deque[float] = deque()
+        loop = asyncio.get_running_loop()
+        for _ in range(self.max_commands):
+            if self._shutdown_requested:
+                return "server_shutdown"
+            try:
+                line = await asyncio.wait_for(reader.readline(), timeout=self.idle_timeout)
+            except asyncio.TimeoutError:
+                return "idle_timeout"
+            except (ValueError, asyncio.LimitOverrunError):
+                return "input_limit"
+            if not line:
+                return "client_disconnect"
+            if len(line) > _READ_LIMIT:
+                return "input_limit"
+            raw_bytes = line.rstrip(b"\r\n")
+            command = raw_bytes.decode("utf-8", errors="replace")
+            current = loop.time()
+            while command_times and current - command_times[0] >= 1.0:
+                command_times.popleft()
+            rate_exceeded = len(command_times) >= 10
+            command_times.append(current)
+            if not self._audit_event("command", session_id, peer_ip,
+                                     command_sha256=hashlib.sha256(raw_bytes).hexdigest(),
+                                     verb=self._audit_verb(command), blocked=True,
+                                     **inspect_text(command),
+                                     reason="command_rate_limit" if rate_exceeded else "inbound_sink_no_execution"):
+                return "audit_limit"
+            if rate_exceeded:
+                return "command_rate_limit"
+        return "command_limit"
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Run the bounded virtual maintenance-console decoy."
@@ -474,6 +619,13 @@ def _parser() -> argparse.ArgumentParser:
         help="explicitly permit a non-loopback bind",
     )
     parser.add_argument("--persona", choices=("linux", "windows"), default="linux")
+    parser.add_argument(
+        "--response-mode",
+        choices=("console", "sink", "mirror"),
+        default="console",
+        help=("console is virtual-only; sink is silent hash-only input; mirror is "
+              "bounded same-connection binary echo without execution or dial-out"),
+    )
     parser.add_argument("--max-sessions", type=int, default=8)
     parser.add_argument("--max-commands", type=int, default=100)
     parser.add_argument("--idle-timeout", type=int, default=20)
@@ -499,6 +651,7 @@ async def _run_from_args(args: argparse.Namespace) -> int:
         audit_limit=args.audit_limit,
         persona=args.persona,
         max_runtime=args.max_runtime,
+        response_mode=args.response_mode,
     )
     server = await service.start(
         host=args.host,

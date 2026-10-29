@@ -1,12 +1,32 @@
 # CloudSentry: Forensics and Deception
 
+**[Launch CloudSentry in your browser](https://csportal-brpeckhv.manus.space)**
+
+The keyless browser portal uses managed Google/Microsoft/passkey sign-in, customer-owned provider profiles and deliberately imported scan results. No cloud API keys are requested or stored. Cloudflare, AWS, Render and Railway profiles are metadata bookmarks, not authenticated cloud connections; customers perform provider login, scanning and export themselves. Every summary asks fresh permission. Direct GitHub sign-in is not included in the approved keyless version.
+
+The browser application source is in [`portal/`](portal/), with [run instructions](portal/README.md). This public repository is an additional source distribution; the live deployment remains separately managed. Source availability and the launch link do not share anyone's reports or credentials.
+
 A local incident-response triage tool with a separate, in-memory deception terminal. It imports pasted or selected real logs, records limited OS details, inventories Linux listeners, flags possible shell-linked TCP connections and persistence indicators, and checks domain/package lookalikes against an operator-provided baseline.
 
 The decoy can display a neutral maintenance console and apparent root/administrator access. This is cosmetic: it never obtains privileges, executes submitted commands, opens an outbound connection, or exposes the actual host. The local terminal opens no sockets; the optional service only accepts bounded inbound sessions. Operator notices, audit events, and evidence exports retain explicit simulation provenance even when the terminal presentation is realistic.
 
-**The scanner is a local CLI. An optional separate decoy service accepts bounded inbound terminal interactions and does not expose a scanner/admin interface. Nothing is deployed publicly by this repository.** Neither mode redirects an existing reverse shell or grants real remote access. Public repository visibility makes the source available; it does not publish your logs or create a public network listener.
+**The scanner and decoy are separate local components. An optional decoy service accepts bounded inbound terminal interactions and does not expose a scanner/admin interface. The browser launch link opens the customer portal, not a public honeypot or shell.** Neither decoy mode redirects an existing reverse shell or grants real remote access. Public repository visibility does not publish your logs or create a decoy listener.
 
 Cloudflare, AWS, Render and Railway exported/pasted logs have separate manual analyzers. Optional supported read-only API collection is an explicitly invoked operation with the owner's scoped credentials; those credentials never belong in the decoy. There is no scan by default. Start only the honeypot with `sh scripts/start-honeypot.sh`, which drops inherited credentials. The [manual workflow](docs/workflow.md) covers cloud evidence, the summary script, and review-only positive-indicator sinkhole proposals. No automatic DNS change, traffic interception or remote credential/file extraction is included.
+
+## Consent-gated review and text indicators
+
+After an explicitly requested scan, the CLI offers a local review by default in an interactive terminal. It asks fresh permission each time and generates nothing when permission is declined, stdin is non-interactive, or input ends. The prompt and optional review use stderr so the original scan JSON remains clean on stdout. No scan is triggered automatically. See the [post-scan review guide](docs/post-scan-review.md).
+
+```sh
+python3 scripts/review-scan.py --scan saved-scan.json --command audit \
+  --audit preserved-service-audit.jsonl
+python3 scripts/trail.py --audit preserved-service-audit.jsonl
+```
+
+The standalone review also asks permission before reading the selected files. Its observed-tooling section is unknown without relevant audit observations; defensive indicators are not proven vulnerabilities, and synthetic actions do not establish unauthorized real-host access. Both scripts perform no network action or submission to law enforcement.
+
+The virtual terminal defaults to a PHP metadata catalog: `php -v`, `php -m` and `which` return canned values. No PHP interpreter is installed or run by this feature; script execution and other interpreter attempts remain blocked. The [text-indicator trail](docs/trail.md) retains only bounded, fixed language/token labels, source context and hashes—not raw one-liners, skill scores or allegations. Mirror mode remains an opaque, bounded byte reflector and does not present or interpret this catalog.
 
 ## Install
 
@@ -27,6 +47,19 @@ python3 -m reverse_shell_decoy --help
 ```
 
 Run only on systems and logs you are authorized to inspect. Do not run as root just to start the decoy. Restricted visibility is reported rather than bypassed.
+
+## Bounded mirror and investigator workflows
+
+The additional [MIRROR mode](docs/mirror.md) reflects received data only through the same accepted inbound socket. It does not execute bytes, dial a peer, loop commands on another computer or capture raw credentials to disk. Start it locally with `bash scripts/mirror.sh`. The default console mode still presents a synthetic computer; `bash scripts/tarpit.sh` is a bounded silent sink.
+
+The [defensive state loop](docs/shellception.md) preserves snapshot/change/virtual-mutation logic without altering real history, SSH, cron or shell startup. Its explicit `--state-output` writes only a private, current synthetic-state artifact. It does not reconstruct historical state from hashes.
+
+```sh
+python3 scripts/export-for-investigator.py --audit preserved-service-audit.jsonl \
+  --state synthetic-state.json --output investigator-review.zip
+```
+
+The [investigator exporter](docs/investigator-export.md) preserves source digests and separates logged interactions, synthetic state/effects, operator assertions and unknown facts. It creates a private review ZIP and readable Markdown sidecar, not an allegation or proof of unauthorized real-host access. Original authentication/network/cloud logs and authorization records remain independent corroboration. No evidence is uploaded or sent to an investigator automatically.
 
 ## Paste real logs
 

@@ -116,10 +116,14 @@ synthetic activity used by this decoy.
   unverified and may describe a different computer. Redacted/normalized imports
   are derivatives; retain the original logs separately. A paste hash identifies
   the received text representation, not the original logfile's bytes.
-- `simulation_audit.json` is synthetic decoy session evidence only. Every
-  recorded event is required to state `"simulation": true`; any represented
-  commands or resource events are simulated and are not records of real shell
-  execution, processes, or network activity.
+- `simulation_audit.json` records decoy audit envelopes. Every recorded event
+  is required to state `"simulation": true`; apparent privileges, terminal
+  responses and virtual resource effects are synthetic, not real shell execution.
+  Separately labeled service peer/timestamp/input-hash fields can describe an
+  inbound interaction as observed in the supplied log, but remain unverified
+  imported observations, not proof of attribution or unauthorized host access.
+  Local operator inputs and synthetic state-loop events must not be presented as
+  visitor connections. Review each event's source and observation/simulation scope.
 - `custody_template.md` is a blank chain-of-custody worksheet. It intentionally
   leaves investigator identity for the receiving investigator to complete.
 

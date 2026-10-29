@@ -104,7 +104,9 @@ class EvidenceBundleTests(unittest.TestCase):
 
                 readme = archive.read("README.md").decode("utf-8")
                 self.assertIn("read-only host OS context", readme)
-                self.assertIn("synthetic decoy session evidence only", readme)
+                self.assertIn("apparent privileges, terminal", readme)
+                self.assertIn("inbound interaction as observed in the supplied log", readme)
+                self.assertIn("not proof of attribution or unauthorized host access", readme)
                 self.assertIn("does not share, upload, or transmit", readme)
                 self.assertIn("do not authenticate", readme)
                 custody = archive.read("custody_template.md").decode("utf-8")

@@ -1,6 +1,6 @@
 # Separate decoy service
 
-The optional service is a small, plaintext, line-oriented TCP maintenance-console decoy. It is not SSH, a real shell, an administrative API or a transparent reverse-shell redirect. The local scanner and the service are separate entry points. The service imports only the virtual terminal and standard-library networking support; its minimal image excludes scanner, ingestion, evidence and correlation modules.
+The optional service defaults to a small, plaintext, line-oriented TCP maintenance-console decoy. It also supports a bounded silent input sink and a bounded inbound-only byte mirror. It is not SSH, a real shell, an administrative API or a transparent reverse-shell redirect. The local scanner and the service are separate entry points. The service imports only the virtual terminal and standard-library networking support; its minimal image excludes scanner, ingestion, evidence and correlation modules.
 
 ## Local smoke test
 
@@ -17,6 +17,8 @@ nc 127.0.0.1 8022
 ```
 
 Do not enter real credentials. The client sees a maintenance banner and apparent privileged identity, but every command reaches only the synthetic state machine. There is no login to a real OS. The server does not initiate outbound connections or run client-supplied scripts.
+
+For silent bounded capture use `bash scripts/tarpit.sh`; for 1:1 byte reflection on the same accepted socket use `bash scripts/mirror.sh`. Neither mode executes input, preserves raw credentials, opens an outbound connection or loops forever. [MIRROR details](mirror.md) explain its byte/chunk limits. These modes do not emulate a real OS; the default console supplies the synthetic computer.
 
 Non-loopback binding requires the explicit `--allow-public` option. It is an implementation capability, not approval to expose a service on an unknown machine. This project does not start a public service for you.
 

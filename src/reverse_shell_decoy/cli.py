@@ -172,6 +172,18 @@ def emit(result: dict) -> None:
     print(json.dumps(result, indent=2, ensure_ascii=True, allow_nan=False))
 
 
+def emit_scan(result: dict, command: str) -> None:
+    """Keep scan JSON on stdout; offer a fresh, local consent-gated review."""
+    emit(result)
+    try:
+        from .review import offer_review
+        offer_review(result, command)
+    except (OSError, ValueError, RuntimeError, ImportError):
+        print("Optional review unavailable; the original scan result is unchanged.", file=sys.stderr)
+    except KeyboardInterrupt:
+        print("Optional review declined; the original scan result is unchanged.", file=sys.stderr)
+
+
 def pasted_cloud_content(marker: str) -> str:
     if not marker or len(marker) > 64 or any(c.isspace() for c in marker):
         raise ValueError("paste marker must be 1..64 non-whitespace characters")
@@ -198,11 +210,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "cloud":
             from .cloud import analyze_cloud_logs
             content = pasted_cloud_content(args.marker) if args.paste else read_regular(args.logs, 8 * 1024 * 1024).decode("utf-8")
-            emit(analyze_cloud_logs(args.provider, content, format=args.format))
+            emit_scan(analyze_cloud_logs(args.provider, content, format=args.format), args.command)
             return 0
         if args.command == "collect-cloud":
             from .collectors import collect_cloud
-            emit(collect_cloud(args.provider, args.scope_id, args.since, args.until, args.region))
+            emit_scan(collect_cloud(args.provider, args.scope_id, args.since, args.until, args.region), args.command)
             return 0
         if args.command == "summary":
             from .summary import run_args
@@ -216,24 +228,24 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "scan":
             from .detector import scan
-            emit(scan())
+            emit_scan(scan(), args.command)
         elif args.command == "os":
             from .evidence import os_info
-            emit(os_info())
+            emit_scan(os_info(), args.command)
         elif args.command == "listeners":
             from .listeners import scan_listeners
-            emit(scan_listeners())
+            emit_scan(scan_listeners(), args.command)
         elif args.command == "persistence":
             from .persistence import scan_persistence
-            emit(scan_persistence(args.root))
+            emit_scan(scan_persistence(args.root), args.command)
         elif args.command == "ingest":
             emit(import_input(args))
         elif args.command == "names":
             from .typosquat import check_names
-            emit(check_names(read_names(args.observed), read_names(args.trusted), kind=args.kind))
+            emit_scan(check_names(read_names(args.observed), read_names(args.trusted), kind=args.kind), args.command)
         elif args.command == "audit":
             from .correlation import audit_host
-            emit(audit_host(import_input(args), optional_names(args)))
+            emit_scan(audit_host(import_input(args), optional_names(args)), args.command)
         elif args.command == "experiment":
             from .experiments import run_scenario
             emit(run_scenario(args.scenario, args.seed))

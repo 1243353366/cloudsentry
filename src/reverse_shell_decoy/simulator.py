@@ -8,6 +8,8 @@ import shlex
 from datetime import datetime, timezone
 from typing import Any
 
+from .signals import inspect_text
+
 MAX_INPUT = 4096
 MAX_COMMANDS = 1000
 MAX_FILES = 128
@@ -49,10 +51,11 @@ class DecoySession:
     def banner(self) -> str:
         privilege = "ROOT ACCESS GRANTED" if self.persona == "linux" else "ADMINISTRATOR ACCESS GRANTED"
         if self.presentation == "realistic":
-            return f"Maintenance console\n{privilege}\nSession ready. Type help to continue.\n"
+            return f"Maintenance console\n{privilege}\nRuntime catalog: PHP\nSession ready. Type help to continue.\n"
         return (
             "REVERSE-SHELL DECOY — AUTHORIZED SIMULATION\n"
             f"{privilege} [synthetic persona only]\n"
+            "[SIMULATED] default runtime catalog: PHP metadata only; no interpreter.\n"
             "[SIMULATED] privilege escalation complete; persistence staged; discovery ready.\n"
             "No real privileges obtained. No commands execute on the host. No network connection.\n"
             "Use help to continue, or exit to end the simulation.\n"
@@ -80,12 +83,13 @@ class DecoySession:
             "blocked": blocked,
             "reason": reason,
             "output_sha256": hashlib.sha256(output.encode()).hexdigest(),
+            **inspect_text(raw),
         })
 
     allowed_verbs = frozenset({
         "help", "exit", "quit", "whoami", "id", "uname", "ver", "get-computerinfo",
         "pwd", "ls", "dir", "cat", "type", "cd", "echo", "touch", "mkdir", "rm",
-        "ps", "get-process", "ss", "netstat", "status",
+        "ps", "get-process", "ss", "netstat", "status", "php", "which",
     })
 
     def execute(self, raw: str) -> str:
@@ -134,13 +138,25 @@ class DecoySession:
     def _dispatch(self, verb: str, args: list[str]) -> str:
         if verb == "help":
             if self.presentation == "realistic":
-                return "Commands: whoami, id, uname, ver, pwd, ls/dir, cat/type, cd, echo, touch, mkdir, rm, ps, ss/netstat, status, exit.\n"
+                return "Commands: php -v/-m, which, whoami, id, uname, ver, pwd, ls/dir, cat/type, cd, echo, touch, mkdir, rm, ps, ss/netstat, status, exit.\n"
             return (
-                "[SIMULATED] Commands: whoami, id, uname, ver, Get-ComputerInfo, pwd, ls/dir,\n"
+                "[SIMULATED] Commands: php -v/-m, which, whoami, id, uname, ver, Get-ComputerInfo, pwd, ls/dir,\n"
                 "cat/type, cd, echo, touch, mkdir, rm, ps/Get-Process, ss/netstat, status, exit.\n"
                 "Virtual paths use / syntax for both personas. No pipes, scripts, shell operators,\n"
                 "network commands, persistence, or arbitrary executables. All records are fictional.\n"
             )
+        if verb == "php":
+            if args in [["-v"], ["--version"]]:
+                return "PHP 8.2.13 (cli) [SIMULATED catalog; no interpreter installed by this tool]\n"
+            if args == ["-m"]:
+                return "Core\nctype\ncurl\n[SIMULATED] module catalog only\n"
+            raise ValueError("execution unavailable; virtual runtime metadata only")
+        if verb == "which":
+            names = args or ["php", "python3", "nc"]
+            if len(names) > 8 or any(name not in {"php", "python3", "python", "nc", "bash", "sh"} for name in names):
+                raise ValueError("virtual catalog names only; no real PATH lookup")
+            ordered = (["php"] if "php" in names else []) + [name for name in names if name != "php"]
+            return "".join(f"/usr/bin/{name}\n" for name in dict.fromkeys(ordered))
         if verb in {"exit", "quit"}:
             self.closed = True
             return "[SIMULATED] session ended\n"
