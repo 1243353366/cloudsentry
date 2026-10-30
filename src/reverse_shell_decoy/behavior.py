@@ -151,8 +151,11 @@ def evaluate(inputs: BehaviorInput) -> dict:
     The result always prohibits enforcement and contains no runtime action.  This
     function neither consumes evidence text nor reads a live policy or integration.
     """
-    if not isinstance(inputs, BehaviorInput):
+    if type(inputs) is not BehaviorInput:
         raise ValueError("inputs must be a BehaviorInput")
+    # Frozen dataclasses are not a security boundary. Recheck the reviewed input
+    # grammar if a trusted caller accidentally bypassed constructor validation.
+    inputs.__post_init__()
 
     if inputs.premature_enforcement_reported:
         return _decision(

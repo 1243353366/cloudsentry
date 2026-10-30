@@ -11,6 +11,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
+from reverse_shell_decoy.authorization import AuthorizationScope, request_authorization
 from reverse_shell_decoy.mirror_regression import CorpusValidationError, main, run_regression
 
 
@@ -30,7 +31,10 @@ class MirrorCorpusRegressionTests(unittest.IsolatedAsyncioTestCase):
                 "reverse_shell_decoy.honeypot.DecoySession.execute",
                 side_effect=AssertionError("mirror must not execute"),
             ):
-                result = await run_regression(corpus)
+                scope = AuthorizationScope("mirror_regression", str(corpus))
+                grant = request_authorization(scope, consent=True)
+                assert grant is not None
+                result = await run_regression(corpus, authorization=grant, scope=scope)
 
         rendered = json.dumps(result, sort_keys=True)
         self.assertTrue(result["passed"])
@@ -58,8 +62,11 @@ class MirrorCorpusRegressionTests(unittest.IsolatedAsyncioTestCase):
                     "reverse_shell_decoy.mirror_regression.DecoyServer.start",
                     new=AsyncMock(side_effect=AssertionError("must not bind")),
                 ) as start:
+                    scope = AuthorizationScope("mirror_regression", str(corpus))
+                    grant = request_authorization(scope, consent=True)
+                    assert grant is not None
                     with self.assertRaises(CorpusValidationError):
-                        await run_regression(corpus)
+                        await run_regression(corpus, authorization=grant, scope=scope)
                 start.assert_not_awaited()
 
 

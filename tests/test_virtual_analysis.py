@@ -45,7 +45,7 @@ class VirtualAnalysisComputerTests(unittest.TestCase):
         event = computer.audit_events[-1]
         self.assertEqual(report["status"], "simulated")
         self.assertEqual(event["event_type"], "command")
-        self.assertEqual(event["session_id"], "virtual-analysis-1")
+        self.assertRegex(event["session_id"], r"\A[0-9a-f]{32}\Z")
         self.assertEqual(event["source_kind"], "in_memory_decoy")
         self.assertFalse(event["interaction_observed"])
         self.assertTrue(event["synthetic_not_connection"])
@@ -157,7 +157,7 @@ class VirtualAnalysisCliTests(unittest.TestCase):
             output, errors = io.StringIO(), io.StringIO()
             with patch("sys.stdin", _TTY("y\n")), contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
                 self.assertEqual(main(["--sample", str(path)]), 0)
-        self.assertIn("Permission to read and process", errors.getvalue())
+        self.assertIn("Authorize this operation? [y/N]", errors.getvalue())
         self.assertEqual(json.loads(output.getvalue())["status"], "static")
 
     def test_require_vm_fails_before_permission_prompt_or_file_open(self):

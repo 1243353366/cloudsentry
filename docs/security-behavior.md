@@ -13,6 +13,10 @@ Without `--consent`, an interactive run asks a fresh default-deny `[y/N]` questi
 
 Training unit tests use only trusted synthetic cases in CI and are not production customer analysis or authorization to run a service. No recurring review is scheduled by this feature.
 
+Each protected invocation now uses a new exact-purpose/input/output permission grant with a five-minute monotonic lifetime and one-pipeline admission latch. The controller checks it before and after reads, analysis and export phases; mirror tests additionally check around connection/read/write phases. Revocation is permanent. CLI SIGINT/SIGTERM cancel the active grant; interrupted/default-deny prompts confer no permission. Catchable interrupted exports remove their partial artifacts. SIGKILL, power loss, an already completed read or arbitrary compromised host code cannot be undone by this gate.
+
+Programmatic file I/O (`snapshot_from_audit`, `write_private_packet`, `verify_packet`, `run_regression`) also requires a fresh matching grant. Pure in-memory normalization/evaluation helpers remain trusted-caller library interfaces, not a consent dialog, an enforcement API or a security boundary against already-running Python code. Never construct approval from uploaded data. The CLI `--consent` flag is the trusted operator's attestation for that invocation, not cryptographic proof that a human clicked a button.
+
 ## Train another script's behavior without self-modifying it
 
 From a source checkout:
@@ -62,7 +66,21 @@ The new private directory contains:
 
 Technical feedback and the customer explanation reference **the same snapshot SHA-256**. The snapshot is immutable as bytes in this process; exported files are not cryptographically signed, append-only or authenticated. Preserve original evidence privately elsewhere. The source hash identifies the selected file's bytes; it does not prove origin, identity, authority or legal custody.
 
-The public report/rendering APIs accept only snapshots produced by the normalization factories, not arbitrary uploaded report dictionaries or serialized snapshot bytes. A module-private factory token prevents accidental API misuse; it is not a security boundary against arbitrary trusted Python code that can inspect or modify the process. No AI agent or uploaded content receives such code authority through these CLI options.
+The public report/rendering APIs accept only snapshots produced by the normalization factories, not arbitrary uploaded report dictionaries or serialized snapshot bytes. A separate registry pins creation, source and session/time-metadata digests and validates them before decoding/consumption. Reflective field changes fail the reviewed library path instead of silently acquiring a new hash. This is not a security boundary against arbitrary Python code that can patch the registry or validator. No uploaded content receives such code authority through these CLI options.
+
+### Verify a report packet before relying on it
+
+After a successful explanation export, the CLI prints the exact **manifest SHA-256**. Preserve that value separately through your trusted operator/custody channel. Do not obtain the supposedly trusted pin from a packet an adversary can replace.
+
+```sh
+python3 scripts/verify-evidence.py --consent \
+  --packet customer-review-packet \
+  --expected-manifest-sha256 TRUSTED_64_CHARACTER_MANIFEST_SHA256
+```
+
+The verifier checks the exact pinned manifest, all four artifact hashes, canonical snapshot/source/session/time bindings, the locally reviewed policy contract, the evidence-derived customer report and the deterministic Markdown rendering. Missing/contradictory fields, cross-session artifact mixing, malformed JSON and selected-file/directory symlinks fail verification. Current anchored packet reading uses Linux `/proc/self/fd`; it is not validated on Windows.
+
+A `verified: true` result means **packet integrity and local format only**, with `source_authenticity: unverified`. It does not authenticate the initial audit, prove a compromise or defeat an attacker who controls the trusted pin, running code or host. Exporting a correctly preserved fabricated log does not make it true. Old packets lacking the new metadata are not silently promoted to the new verified format; preserve their originals and handle them separately.
 
 ### Explanation integrity
 
@@ -89,3 +107,5 @@ PYTHONPATH=src python3 -m unittest discover -s tests -p 'test_virtual_analysis.p
 ```
 
 The user-facing options are never enabled by a scan finding, login, fixture result or imported instruction. Proposed rule changes require separate human review. See [engineering rules](engineering-rules.md) and the [existing evidence exporter](investigator-export.md) for broader provenance and handoff limits.
+
+The [adversarial assurance guide](adversarial-assurance.md) describes reproducible tests and their unknowns. The [three-layer fallback guide](fallback-layers.md) keeps primary VM, unverified PC-Free backup and emergency echo separate; no detector result automatically provisions or authorizes any of them.

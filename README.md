@@ -82,6 +82,18 @@ python3 scripts/security-behavior.py explain --audit preserved-service-audit.jso
 
 The first command compares expected/actual behavior across synthetic regressions and exports a contract another trusted script can review. The second creates private technical feedback and a plain-English customer report from **one shared immutable in-process audit snapshot**, with source/line/artifact hashes and explicit uncertainty. It explains recorded events, inferred patterns and why no automatic containment was authorized. It never treats logs as commands or approval, invents missing evidence, describes synthetic privileges as a real compromise or sends a report automatically. Existing output directories are never overwritten.
 
+### Test adversarial boundaries and verify a packet
+
+```sh
+python3 scripts/adversarial-assurance.py --consent
+python3 scripts/verify-evidence.py --consent --packet customer-review-packet \
+  --expected-manifest-sha256 TRUSTED_64_CHARACTER_MANIFEST_SHA256
+```
+
+The exporter prints the manifest digest for preservation **outside the packet** through a trusted channel. Verification rejects tampered/mismatched artifacts or missing session/time metadata; it confirms packet consistency, **not initial source authenticity**. Optional file-I/O paths use fresh revocable, exact-scope, single-run grants. A failed integrity/permission check stops the operation instead of automatically executing, provisioning or exporting further data. See [adversarial assurance and measured limits](docs/adversarial-assurance.md): 291 local tests and 83 focused checks passed, including 8,192 Boolean policy configurations with no enforcement authority. This is regression evidence, not a proof against every trick, malicious dependency or compromised host.
+
+The [three-layer fallback instructions](docs/fallback-layers.md) describe **bounded echo on each customer-controlled layer**: primary VM, separately hardened PC-Free Windows backup and isolated emergency echo. The real VM/backup/floating-proxy controller is not implemented. PC-Free's published defaults are not automatically trusted or installed; it remains an unverified backup candidate until independently hardened and validated. Detection or uploaded “verified” flags cannot grant permission to provision it.
+
 The separate optional `scripts/analyze-safely.py` provides static inspection and an explicitly synthetic virtual computer. It does not execute real samples. A real-VM requirement fails closed rather than silently running malware on the customer's device or treating a container/synthetic console as a VM. See the [virtual-analysis boundaries](docs/virtual-analysis.md); real disposable-VM provisioning, guest telemetry and VM-escape validation are not implemented or claimed.
 
 The [optional corpus runner](docs/prompt-injection-corpus.md) can test a customer-authorized local JSONL export or the repository's **original synthetic examples** against an ephemeral, finite loopback-only mirror. It requires fresh consent, retains hashes rather than raw prompts and offers no external target selection. The linked third-party database remains access-gated; this project did not scrape it, redistribute its full dataset, install code on its website or submit a contribution. Exact echo is not proof of LLM injection detection or jailbreak resistance.

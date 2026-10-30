@@ -9,6 +9,7 @@ import unittest
 from unittest.mock import patch
 
 from reverse_shell_decoy import incident_explainer as explainer
+from reverse_shell_decoy.authorization import AuthorizationScope, request_authorization
 from reverse_shell_decoy.operations import build_operations_summary_bytes
 
 
@@ -90,13 +91,17 @@ class IncidentExplainerTests(unittest.TestCase):
             link = Path(root) / "link.jsonl"
             link.symlink_to(path)
             with self.assertRaises(ValueError):
-                explainer.snapshot_from_audit(str(link))
+                scope = AuthorizationScope("explain", str(link))
+                explainer.snapshot_from_audit(str(link), authorization=request_authorization(scope, consent=True), scope=scope)
             output = Path(root) / "packet"
-            explainer.write_private_packet(str(output), explainer.explanation_packet(explainer.snapshot_from_audit(str(path))))
+            scope = AuthorizationScope("explain", str(path), str(output))
+            grant = request_authorization(scope, consent=True)
+            snapshot = explainer.snapshot_from_audit(str(path), authorization=grant, scope=scope)
+            explainer.write_private_packet(str(output), explainer.explanation_packet(snapshot), authorization=grant, scope=scope)
             self.assertEqual(os.stat(output).st_mode & 0o777, 0o700)
             self.assertTrue(all(os.stat(file).st_mode & 0o777 == 0o600 for file in output.iterdir()))
             with self.assertRaises(FileExistsError):
-                explainer.write_private_packet(str(output), {"customer-explanation.md": b"overwrite"})
+                explainer.write_private_packet(str(output), {"customer-explanation.md": b"overwrite"}, authorization=request_authorization(scope, consent=True), scope=scope)
             self.assertNotEqual((output / "customer-explanation.md").read_bytes(), b"overwrite")
 
     def test_bytes_summary_is_pure_and_rejects_oversized_and_nonbytes_inputs(self):
