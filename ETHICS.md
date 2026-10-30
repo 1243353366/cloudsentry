@@ -16,7 +16,7 @@ Customer-selected writing summaries describe linguistic/content patterns. They a
 
 ## Preserve creators and original work
 
-The root README credits referenced creators and communities through profile/project links. Their names are attribution, not claims of partnership, endorsement or involvement. Retain component-specific licenses, copyright, original documentation and source revision notices. The root MIT license does not replace an upstream license.
+The root README credits referenced creators and communities through profile/project links. Their names are attribution, not claims of partnership, endorsement or involvement. Retain component-specific licenses, copyright, original documentation and source revision notices. The root Apache-2.0 license does not replace an upstream license; the previous root MIT notice and existing grants are preserved as described in NOTICE.
 
 The configuration auditor from HuginnsHammer is a separately namespaced, pinned MIT-licensed source integration. Other linked VM, firmware, hardware, TPM and research projects are references or reviewed distribution tools unless a component's notice explicitly says otherwise. Do not silently copy access-gated corpora or treat a GitHub link as authorization to deploy its defaults.
 

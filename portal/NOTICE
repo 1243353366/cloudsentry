@@ -1,0 +1,17 @@
+CloudSentry Keyless Operator Portal
+Copyright (c) 2026 reverse-shell-decoy contributors.
+
+Original CloudSentry portal code and documentation are distributed under the
+Apache License, Version 2.0, except for components bearing separate notices.
+See LICENSE for the terms. This NOTICE is informational and does not modify
+any license or claim ownership of external dependencies.
+
+The previous original-project MIT notice is preserved in
+licenses/MIT-legacy.txt; existing grants for earlier published versions are
+not retroactively withdrawn. Dependencies, assets and separately attributed
+starter/source fragments retain their own licenses and notices.
+
+The separate configuration auditor by HuginnsHammer remains MIT-licensed in
+the parent repository and is not executed or deployed by this portal.
+Creator credits and the complete source index are in the parent README.md
+and LINKS.md. No creator or Apache Software Foundation endorsement is implied.

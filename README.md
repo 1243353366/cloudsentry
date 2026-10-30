@@ -425,6 +425,10 @@ docker run --rm -i --network none --read-only --cap-drop ALL \
 
 The image runs as UID 10001, not root. Do not add host volumes, the Docker socket, privileged mode, host networking, host PID namespaces or published ports. Building the image may download its base image; the example runtime has no network. Runtime limits affect only this disposable container, not a remote system. A scanner inside it sees the container's namespace, not the actual host. The configuration is defense in depth, not a sandbox for executing hostile programs. Docker execution is not required for the CLI.
 
+## License
+
+Original CloudSentry code and documentation are licensed under the **[Apache License 2.0](LICENSE)**, except where separate component notices apply. See [NOTICE](NOTICE) for attribution and scope. The bundled auditor by @HuginnsHammer remains **MIT-licensed** under its unchanged [upstream license](integrations/config-auditor/LICENSE); other dependencies and assets retain their own terms. The previous root MIT notice is preserved in [licenses/MIT-legacy.txt](licenses/MIT-legacy.txt), and this change does not retroactively withdraw grants for previously published versions. Creator credits and the containment limitation remain unchanged.
+
 ## Tests and limitations
 
 ```sh
@@ -433,4 +437,4 @@ PYTHONPATH=src python3 -m unittest discover -s tests -v
 
 Tests use synthetic proc/config/log fixtures and hostile input strings. CI is configured for Python 3.10, 3.12 and 3.13 on Linux; see [testing notes](docs/testing.md) for what was actually executed locally. See [security policy](SECURITY.md), [trust boundaries](docs/threat-model.md), and [implementation references](docs/references.md).
 
-MIT licensed. A triage tool can miss short-lived activity, hidden processes, namespace-isolated sockets, encrypted application behavior and persistence outside its configured roots. Neither a positive indicator nor an empty report is a definitive compromise verdict.
+A triage tool can miss short-lived activity, hidden processes, namespace-isolated sockets, encrypted application behavior and persistence outside its configured roots. Neither a positive indicator nor an empty report is a definitive compromise verdict.

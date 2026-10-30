@@ -1,0 +1,25 @@
+CloudSentry: Forensics and Deception
+Copyright (c) 2026 reverse-shell-decoy contributors.
+
+Original CloudSentry project code and documentation are distributed under the
+Apache License, Version 2.0, except where a component carries a separate notice.
+See LICENSE for the complete terms. This NOTICE is informational and does not
+modify any license.
+
+The prior root MIT notice is preserved in licenses/MIT-legacy.txt. Previously
+published versions and existing license grants are not retroactively withdrawn
+by this change. Original copyright and attribution notices remain applicable.
+
+This distribution includes a separately namespaced source snapshot of
+HuginnsHammer/CloudSentry, copyright (c) 2026 HuginnsHammer, under the MIT License.
+Its original license, source pin and notices are preserved unchanged in
+integrations/config-auditor/LICENSE and integrations/config-auditor/NOTICE.md.
+The Apache-2.0 project license does not replace that upstream license.
+
+Other dependencies, assets and separately identified source fragments retain
+their own copyright notices and licenses. Referenced external projects are not
+relicensed, included or endorsed merely because this repository links to them.
+Creator credits and project references are in README.md and LINKS.md.
+
+The Apache name and license do not imply Apache Software Foundation affiliation
+or endorsement of this project.

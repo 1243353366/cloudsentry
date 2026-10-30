@@ -50,3 +50,7 @@ The local CLI, virtual terminal and bounded mirror are documented in the reposit
 ## Credited combined local toolkit
 
 The published home page and signed-in Manual workflow link the independently namespaced MIT static configuration auditor by [@HuginnsHammer](https://github.com/HuginnsHammer/CloudSentry), the consent-gated customer forensic-style packet and the no-launch resource-policy review. Setup, preserved licenses, source pins and every referenced creator are indexed in the [root guide index](../LINKS.md). The portal does not execute these tools, take cloud keys, launch VMs/services or convert imported statuses into authorization. Every command is a separate customer-run local operation; descriptive text patterns are not authorship, psychology or legal proof.
+
+## License
+
+Original CloudSentry portal code is [Apache-2.0](LICENSE), subject to the attribution and third-party exceptions in [NOTICE](NOTICE). Earlier MIT grants are not retroactively withdrawn; their notice is preserved in `licenses/MIT-legacy.txt`. The separately bundled HuginnsHammer auditor remains under its original MIT license. Dependencies and assets retain their own terms.
