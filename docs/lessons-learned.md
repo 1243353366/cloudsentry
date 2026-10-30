@@ -32,6 +32,10 @@ The manual emergency profile starts a new silent, non-executing listener with a 
 
 Gitleaks is pinned in CI and opt-in pre-commit configuration. Redacted release scans of reachable history and the working tree passed. The initial working-tree scan flagged a synthetic credential-shaped fixture; constructing that dummy value at runtime preserved the test without weakening scanner rules. A passing scan is not proof of no past/future leak. Revoke/rotate exposed credentials first; deleting a file or rewriting history does not revoke a key.
 
+### 8. Cross-version CI adds evidence that local tests cannot
+
+The first public matrix run caught a short-fraction ISO timestamp parsing difference on Python 3.10 that was absent on the sandbox's Python 3.12. The parser now pads fractional seconds before conversion, preserving the same chronological evidence ordering across supported runtimes. Fix the compatibility behavior rather than deleting the regression or narrowing the supported matrix merely to obtain a green badge.
+
 ## Actual release validation
 
 - **208 local Python tests passed**; Python compilation and shell syntax checks passed.

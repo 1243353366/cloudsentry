@@ -166,8 +166,15 @@ def _timestamp(value: object) -> str | None:
     """Return an ISO-8601 UTC time only when a supplied time has an offset."""
     if not isinstance(value, str) or not value or len(value) > 64:
         return None
+    # Python 3.10 accepts three/six fractional digits whereas newer versions
+    # also accept shorter fractions. Preserve their value across supported runtimes.
+    normalized = re.sub(
+        r"\.(\d{1,5})(?=[+-]\d{2}:\d{2}$)",
+        lambda match: "." + match.group(1).ljust(6, "0"),
+        value.replace("Z", "+00:00"),
+    )
     try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(normalized)
     except ValueError:
         return None
     if parsed.tzinfo is None or parsed.utcoffset() is None:
