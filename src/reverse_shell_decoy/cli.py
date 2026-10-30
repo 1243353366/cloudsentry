@@ -130,6 +130,9 @@ def parser() -> argparse.ArgumentParser:
     summary = sub.add_parser("summary", help="summarize supplied files only; never launch or scan anything")
     from .summary import add_arguments
     add_arguments(summary)
+    operations = sub.add_parser("operations", help="local decoy budget and activity-pattern summary from explicitly selected audit")
+    from .operations import add_arguments as add_operations_arguments
+    add_operations_arguments(operations)
     response = sub.add_parser("sinkhole-plan", help="review-only proposal; never changes DNS or redirects traffic")
     response.add_argument("--report", required=True)
     response.add_argument("--owned-domain", required=True)
@@ -219,6 +222,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "summary":
             from .summary import run_args
             return run_args(args)
+        if args.command == "operations":
+            from .operations import run_args as run_operations_args
+            return run_operations_args(args)
         if args.command == "sinkhole-plan":
             from .response import sinkhole_plan
             report = json.loads(read_regular(args.report, 8 * 1024 * 1024).decode("utf-8"))

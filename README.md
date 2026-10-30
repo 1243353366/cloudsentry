@@ -14,6 +14,35 @@ The decoy can display a neutral maintenance console and apparent root/administra
 
 Cloudflare, AWS, Render and Railway exported/pasted logs have separate manual analyzers. Optional supported read-only API collection is an explicitly invoked operation with the owner's scoped credentials; those credentials never belong in the decoy. There is no scan by default. Start only the honeypot with `sh scripts/start-honeypot.sh`, which drops inherited credentials. The [manual workflow](docs/workflow.md) covers cloud evidence, the summary script, and review-only positive-indicator sinkhole proposals. No automatic DNS change, traffic interception or remote credential/file extraction is included.
 
+## Defensive resource economics
+
+**Make suspicious activity unproductive while keeping your own decoy's work finite.** The design objective is to deny useful access through the synthetic environment, preserve evidence-linked indicators and automatically stop at local resource limits—not damage another device, force an investigation, consume remote resources or guarantee an attacker's costs. No command entered into the decoy reaches a real host interpreter. A synthetic environment is not a promise that the whole surrounding infrastructure cannot be compromised.
+
+The service now enforces **global admitted-input and reserved-output budgets** across all sessions, plus a **per-session input budget** and a **configurable command/chunk rate**. Global byte-budget violations close the listener and active sessions; per-session input/rate violations close the affected session. Time, connection, command and audit limits remain in force, with no automatic restart. Example for an authorized isolated local environment:
+
+```sh
+sh scripts/start-honeypot.sh --max-runtime 600 \
+  --max-input-bytes-total 1048576 --max-output-bytes-total 1048576 \
+  --max-session-input-bytes 65536 --commands-per-second 5
+```
+
+Default byte budgets are 1 MiB global input, 1 MiB global output and 64 KiB input per session; the default rate is 10 commands/chunks per second. These are application budgets, not physical traffic meters. Reserved output remains counted even if socket delivery fails. CPU/memory restrictions require external container/runtime enforcement; network floods, billed ingress and cloud-spending ceilings require independent infrastructure controls. Closing the decoy does not stop cloud billing by itself.
+
+Generate an **operating summary from one explicitly selected preserved audit**:
+
+```sh
+reverse-shell-decoy operations --audit preserved-service-audit.jsonl
+python3 scripts/operations-summary.py --audit preserved-service-audit.jsonl --json
+```
+
+The local command reports validated supplied budget snapshots, available UTC timestamps, source hashes, hash-referenced sessions, coverage gaps and low-confidence activity flags: `connection_only`, `probe_like`, `burst_pattern`, `multi_command_pattern` and `execution_related_text`. These are overlapping patterns, not reliable classifications of scanners, humans or exploitation. It excludes peer addresses and raw commands; every imported record remains unverified. It performs no network action, host scan or remediation.
+
+Customers may save the resulting JSON privately and deliberately import it into the browser portal as provider `local`. The live **Manual workflow** explains this process; the browser does not execute the local command, re-run its classifier, accept raw JSONL as a report or deploy a honeypot. Portal summaries still require fresh permission.
+
+**Opt in manually:** choose your isolated environment, explicitly start the loopback service, preserve the audit privately, and generate your selected report. Non-loopback binding additionally requires `--allow-public` plus your own reviewed ingress/egress configuration. Login or a positive scan never enables exposure. The [customer opt-in instructions](docs/resource-economics.md#customer-opt-in-run-it-manually-on-your-infrastructure) cover private no-overwrite logging and separately approved manual containment. The customer—not the portal—makes those operational choices.
+
+See [resource budgets and operating-report details](docs/resource-economics.md). Adaptive firewall enforcement, automatic DNS sinkholing, monitored canary credentials and guaranteed attacker-cost estimates are **not** implemented. DNS proposals remain separate, ownership-confirmed and review-only.
+
 ## Consent-gated review and text indicators
 
 After an explicitly requested scan, the CLI offers a local review by default in an interactive terminal. It asks fresh permission each time and generates nothing when permission is declined, stdin is non-interactive, or input ends. The prompt and optional review use stderr so the original scan JSON remains clean on stdout. No scan is triggered automatically. See the [post-scan review guide](docs/post-scan-review.md).

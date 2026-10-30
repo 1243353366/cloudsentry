@@ -17,6 +17,7 @@ import ipaddress
 import json
 import os
 import sys
+import time
 from typing import Any, Deque, Optional
 import uuid
 
@@ -35,6 +36,10 @@ _CONFIG_LIMITS = {
     "session_timeout": (1, 3600),
     "max_sessions_total": (1, 100),
     "audit_limit": (1, 1000),
+    "max_input_bytes_total": (1, 8 * 1024 * 1024),
+    "max_output_bytes_total": (1, 8 * 1024 * 1024),
+    "max_session_input_bytes": (1, 256 * 1024),
+    "commands_per_second": (1, 10),
 }
 _MAX_RUNTIME_SECONDS = 3600.0
 
@@ -100,6 +105,10 @@ class DecoyServer:
         persona: str = "linux",
         max_runtime: float = 600,
         response_mode: str = "console",
+        max_input_bytes_total: int = 1024 * 1024,
+        max_output_bytes_total: int = 1024 * 1024,
+        max_session_input_bytes: int = 64 * 1024,
+        commands_per_second: int = 10,
     ) -> None:
         self.max_sessions = _require_int("max_sessions", max_sessions)
         self.max_commands = _require_int("max_commands", max_commands)
@@ -108,6 +117,10 @@ class DecoyServer:
         self.max_sessions_total = _require_int("max_sessions_total", max_sessions_total)
         self.audit_limit = _require_int("audit_limit", audit_limit)
         self.max_runtime = _require_runtime(max_runtime)
+        self.max_input_bytes_total = _require_int("max_input_bytes_total", max_input_bytes_total)
+        self.max_output_bytes_total = _require_int("max_output_bytes_total", max_output_bytes_total)
+        self.max_session_input_bytes = _require_int("max_session_input_bytes", max_session_input_bytes)
+        self.commands_per_second = _require_int("commands_per_second", commands_per_second)
         if persona not in {"linux", "windows"}:
             raise ValueError("persona must be linux or windows")
         self.persona = persona
@@ -126,6 +139,13 @@ class DecoyServer:
         self._shutdown_reason = ""
         self._runtime_expired = False
         self._runtime_task: Optional[asyncio.Task[None]] = None
+        self._input_bytes_total = 0
+        self._output_bytes_total = 0
+        self._session_input_bytes: dict[str, int] = {}
+        self._peak_active_sessions = 0
+        self._started_at: Optional[float] = None
+        self._stopped_at: Optional[float] = None
+        self._budget_stopped = False
 
     @property
     def server(self) -> Optional[asyncio.Server]:
@@ -141,6 +161,68 @@ class DecoyServer:
     def connection_count(self) -> int:
         """Lifetime TCP connection attempts observed by this server instance."""
         return self._connection_count
+
+    def budget_snapshot(self) -> dict[str, Any]:
+        """Local admission/reservation counters, not wire delivery or remote costs."""
+        elapsed = 0.0 if self._started_at is None else max(
+            0.0, (self._stopped_at if self._stopped_at is not None else time.monotonic()) - self._started_at
+        )
+        return {
+            "limits": {
+                "max_sessions": self.max_sessions,
+                "max_sessions_total": self.max_sessions_total,
+                "max_commands": self.max_commands,
+                "max_runtime_seconds": self.max_runtime,
+                "idle_timeout_seconds": self.idle_timeout,
+                "session_timeout_seconds": self.session_timeout,
+                "max_input_bytes_total": self.max_input_bytes_total,
+                "max_output_bytes_total": self.max_output_bytes_total,
+                "max_session_input_bytes": self.max_session_input_bytes,
+                "commands_per_second": self.commands_per_second,
+            },
+            "usage": {
+                "input_bytes_total": self._input_bytes_total,
+                "output_bytes_total": self._output_bytes_total,
+                "accepted_connections": self._connection_count,
+                "active_sessions": self.active_sessions,
+                "peak_active_sessions": self._peak_active_sessions,
+                "elapsed_seconds": round(elapsed, 6),
+            },
+        }
+
+    def _budget_event(self, phase: str) -> None:
+        self._audit_event(
+            "service_budget", "service", "unknown",
+            source_kind="decoy_service_control", interaction_observed=False,
+            peer_ip_source="not_applicable_local_control",
+            simulation_scope="local_configuration_and_budget_counters",
+            phase=phase, stop_reason=self._shutdown_reason or "not_stopped",
+            **self.budget_snapshot(),
+        )
+
+    def _consume_input(self, size: int, session_id: str) -> Optional[str]:
+        """Reserve admission before processing; never count rejected bytes as admitted."""
+        if self._shutdown_requested:
+            return self._shutdown_reason or "server_shutdown"
+        if self._input_bytes_total + size > self.max_input_bytes_total:
+            self._begin_shutdown("global_input_byte_budget")
+            return "global_input_byte_budget"
+        consumed = self._session_input_bytes.get(session_id, 0)
+        if consumed + size > self.max_session_input_bytes:
+            return "session_input_byte_budget"
+        self._input_bytes_total += size
+        self._session_input_bytes[session_id] = consumed + size
+        return None
+
+    def _reserve_output(self, size: int) -> bool:
+        """Reserve before an await; drain failure does not refund the conservative budget."""
+        if self._shutdown_requested:
+            return False
+        if self._output_bytes_total + size > self.max_output_bytes_total:
+            self._begin_shutdown("global_output_byte_budget")
+            return False
+        self._output_bytes_total += size
+        return True
 
     async def start(
         self,
@@ -161,6 +243,8 @@ class DecoyServer:
             raise RuntimeError("lifetime connection quota has already been exhausted")
         if self._runtime_expired:
             raise RuntimeError("service runtime has already expired; create a new server")
+        if self._started_at is not None or self._audit_exhausted:
+            raise RuntimeError("service instance cannot restart; create a new server")
 
         self._shutdown_requested = False
         self._shutdown_reason = ""
@@ -171,7 +255,10 @@ class DecoyServer:
             limit=_READ_LIMIT,
             backlog=self.max_sessions,
         )
-        self._runtime_task = asyncio.create_task(self._runtime_guard())
+        self._started_at = time.monotonic()
+        self._budget_event("started")
+        if not self._shutdown_requested:
+            self._runtime_task = asyncio.create_task(self._runtime_guard())
         return self._server
 
     async def shutdown(self) -> None:
@@ -197,6 +284,11 @@ class DecoyServer:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         self._active_sessions.clear()
+        self._session_input_bytes.clear()
+        if self._started_at is not None and not self._budget_stopped:
+            self._stopped_at = time.monotonic()
+            self._budget_stopped = True
+            self._budget_event("stopped")
 
     async def close(self) -> None:
         """Alias for :meth:`shutdown` for callers using server-style cleanup."""
@@ -304,13 +396,15 @@ class DecoyServer:
         token = command.strip().split(None, 1)[0].lower() if command.strip() else "empty"
         return token if token in DecoySession.allowed_verbs else "unsupported"
 
-    @staticmethod
-    async def _safe_write(writer: asyncio.StreamWriter, text: str) -> bool:
+    async def _safe_write(self, writer: asyncio.StreamWriter, text: str) -> bool:
         """Write bounded, control-safe terminal text without an unbounded drain wait."""
         if writer.is_closing():
             return False
+        encoded = display_safe(text).encode("utf-8", errors="replace")
+        if not self._reserve_output(len(encoded)):
+            return False
         try:
-            writer.write(display_safe(text).encode("utf-8", errors="replace"))
+            writer.write(encoded)
             await asyncio.wait_for(writer.drain(), timeout=_WRITE_TIMEOUT)
             return True
         except (ConnectionError, OSError, asyncio.TimeoutError):
@@ -371,6 +465,8 @@ class DecoyServer:
                 return
 
             self._active_sessions[session_id] = writer
+            self._session_input_bytes[session_id] = 0
+            self._peak_active_sessions = max(self._peak_active_sessions, self.active_sessions)
             close_reason = "completed"
             try:
                 close_reason = await asyncio.wait_for(
@@ -388,6 +484,7 @@ class DecoyServer:
                 if self._shutdown_requested and self._shutdown_reason:
                     close_reason = self._shutdown_reason
                 self._active_sessions.pop(session_id, None)
+                self._session_input_bytes.pop(session_id, None)
                 self._audit_event("close", session_id, peer_ip, reason=close_reason)
                 await self._finish_writer(writer)
         finally:
@@ -431,6 +528,13 @@ class DecoyServer:
                 await self._safe_write(writer, "Input too long.\n")
                 return "input_limit"
 
+            budget_reason = self._consume_input(len(line), session_id)
+            if budget_reason:
+                self._audit_event("command", session_id, peer_ip, blocked=True,
+                                  reason=budget_reason, verb="unsupported",
+                                  input_sha256=hashlib.sha256(line).hexdigest(),
+                                  input_byte_count=len(line))
+                return budget_reason
             # Preserve exact command bytes for the hash while removing only the
             # terminal line separator before virtual execution.
             raw_bytes = line[:-1] if line.endswith(b"\n") else line
@@ -440,7 +544,7 @@ class DecoyServer:
             now = loop.time()
             while command_times and now - command_times[0] >= 1.0:
                 command_times.popleft()
-            if len(command_times) >= 10:
+            if len(command_times) >= self.commands_per_second:
                 self._audit_event(
                     "command",
                     session_id,
@@ -449,6 +553,7 @@ class DecoyServer:
                     verb=self._audit_verb(command),
                     blocked=True,
                     reason="command_rate_limit",
+                    input_byte_count=len(line),
                     **inspect_text(command),
                 )
                 await self._safe_write(writer, "Command rate limit reached.\n")
@@ -466,6 +571,7 @@ class DecoyServer:
                 verb=self._audit_verb(command),
                 blocked=virtual_event["blocked"],
                 reason=virtual_event["reason"],
+                input_byte_count=len(line),
                 output_sha256=virtual_event["output_sha256"],
                 **inspect_text(command),
             ):
@@ -523,10 +629,16 @@ class DecoyServer:
                 chunk_times.popleft()
             payload_details = {
                 "byte_count": len(payload),
+                "input_byte_count": len(payload),
                 "chunk_sha256": hashlib.sha256(payload).hexdigest(),
                 "execution": False,
             }
-            if len(chunk_times) >= _MIRROR_MAX_CHUNKS_PER_SECOND:
+            budget_reason = self._consume_input(len(payload), session_id)
+            if budget_reason:
+                self._audit_event("mirror_chunk", session_id, peer_ip,
+                                  **payload_details, blocked=True, reason=budget_reason)
+                return budget_reason
+            if len(chunk_times) >= min(self.commands_per_second, _MIRROR_MAX_CHUNKS_PER_SECOND):
                 self._audit_event(
                     "mirror_chunk",
                     session_id,
@@ -547,6 +659,10 @@ class DecoyServer:
                 )
                 return "byte_budget"
 
+            if not self._reserve_output(len(payload)):
+                self._audit_event("mirror_chunk", session_id, peer_ip,
+                                  **payload_details, blocked=True, reason="global_output_byte_budget")
+                return "global_output_byte_budget"
             if not self._audit_event(
                 "mirror_chunk",
                 session_id,
@@ -589,15 +705,23 @@ class DecoyServer:
                 return "client_disconnect"
             if len(line) > _READ_LIMIT:
                 return "input_limit"
+            budget_reason = self._consume_input(len(line), session_id)
+            if budget_reason:
+                self._audit_event("command", session_id, peer_ip, blocked=True,
+                                  reason=budget_reason, verb="unsupported",
+                                  input_sha256=hashlib.sha256(line).hexdigest(),
+                                  input_byte_count=len(line))
+                return budget_reason
             raw_bytes = line.rstrip(b"\r\n")
             command = raw_bytes.decode("utf-8", errors="replace")
             current = loop.time()
             while command_times and current - command_times[0] >= 1.0:
                 command_times.popleft()
-            rate_exceeded = len(command_times) >= 10
+            rate_exceeded = len(command_times) >= self.commands_per_second
             command_times.append(current)
             if not self._audit_event("command", session_id, peer_ip,
                                      command_sha256=hashlib.sha256(raw_bytes).hexdigest(),
+                                     input_byte_count=len(line),
                                      verb=self._audit_verb(command), blocked=True,
                                      **inspect_text(command),
                                      reason="command_rate_limit" if rate_exceeded else "inbound_sink_no_execution"):
@@ -632,6 +756,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--session-timeout", type=int, default=120)
     parser.add_argument("--max-sessions-total", type=int, default=100)
     parser.add_argument("--audit-limit", type=int, default=1000)
+    parser.add_argument("--max-input-bytes-total", type=int, default=1024 * 1024)
+    parser.add_argument("--max-output-bytes-total", type=int, default=1024 * 1024)
+    parser.add_argument("--max-session-input-bytes", type=int, default=64 * 1024)
+    parser.add_argument("--commands-per-second", type=int, default=10)
     parser.add_argument(
         "--max-runtime",
         type=int,
@@ -652,12 +780,19 @@ async def _run_from_args(args: argparse.Namespace) -> int:
         persona=args.persona,
         max_runtime=args.max_runtime,
         response_mode=args.response_mode,
+        max_input_bytes_total=args.max_input_bytes_total,
+        max_output_bytes_total=args.max_output_bytes_total,
+        max_session_input_bytes=args.max_session_input_bytes,
+        commands_per_second=args.commands_per_second,
     )
     server = await service.start(
         host=args.host,
         port=args.port,
         allow_public=args.allow_public,
     )
+    if not server.is_serving():
+        await service.shutdown()
+        return 2 if service._shutdown_reason in {"audit_limit", "operator_audit_failure"} else 0
     try:
         await server.serve_forever()
     except asyncio.CancelledError:

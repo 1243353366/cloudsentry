@@ -17,3 +17,10 @@ Approved design remains Signal Room Amber: graphite #171717, amber #F59E0B, Sour
 ## Existing local tool
 
 The separate local source package includes virtual PHP metadata, bounded text indicators, an investigator exporter and per-invocation consent-gated summaries. Its integrated suite passes 179 tests. No actual incident records were supplied, no case evidence was submitted, and no customer's cloud accounts have been accessed.
+
+## Approved defensive-resource update
+
+- [x] Explain the optional local decoy's finite global input/output budgets, per-session input budget and configurable rate, with no remote workload or guaranteed cloud-bill ceiling.
+- [x] Show the customer-run command for generating an operating report from one explicitly selected local audit, then importing that JSON as provider `local`; do not launch a decoy, inspect a portal host, accept raw audit streams or grant cloud access through this website.
+- [x] Link to the public resource-economics guide and explain low-confidence pattern flags, unknown coverage, unverified sources and fresh summary consent. Keep the existing exact-origin/CSRF/ownership/authentication protections unchanged.
+- [ ] Check the affected portal build, publish an accepted managed checkpoint and verify the final live version. Publish reviewed local source and README updates to the existing public repository without secrets or incident data.

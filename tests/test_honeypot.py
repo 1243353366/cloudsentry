@@ -164,8 +164,12 @@ class HoneypotServerTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("very-secret-value", serialised)
         for event in service.audit:
             self.assertTrue(event["simulation"])
-            self.assertEqual(event["source_kind"], "decoy_service_interaction")
-            self.assertTrue(event["interaction_observed"])
+            if event["event_type"] == "service_budget":
+                self.assertEqual(event["source_kind"], "decoy_service_control")
+                self.assertFalse(event["interaction_observed"])
+            else:
+                self.assertEqual(event["source_kind"], "decoy_service_interaction")
+                self.assertTrue(event["interaction_observed"])
             self.assertEqual(event["attacker_identity"], "unknown")
             self.assertEqual(event["remote_os"], "unknown")
             self.assertIn("timestamp_utc", event)

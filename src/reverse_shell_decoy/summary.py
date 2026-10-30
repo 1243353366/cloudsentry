@@ -53,7 +53,9 @@ def _decoy(path: str | None) -> dict:
             continue
         events.append(event)
     commands = [e for e in events if e.get("event_type") == "command" or "input_sha256" in e]
-    sessions = {e["session_id"] for e in events if isinstance(e.get("session_id"), str)}
+    sessions = {e["session_id"] for e in events if isinstance(e.get("session_id"), str)
+                and e.get("event_type") != "service_budget"
+                and e.get("source_kind") != "decoy_service_control"}
     return {
         "status": "supplied_unverified_audit",
         "sessions": len(sessions),

@@ -20,6 +20,14 @@ The operator sees a separate notice. Every audit event remains `simulation: true
 
 The optional network service separately accepts bounded inbound sessions and feeds only this virtual parser. It imports no scanner/admin interface, and its minimal image excludes scanner/evidence modules. It defaults to loopback binding. Real observed connection time and source endpoint are recorded as interaction metadata, while privileged session effects remain synthetic; remote OS and attacker identity are unknown. Public use requires explicit binding and separately enforced infrastructure isolation, egress denial and trusted external log collection. It is not deployed by this repository.
 
+## Defensive resource budgets and operating summaries
+
+Global input-admission and output-reservation byte limits, per-session input limits, bounded rates and existing connection/time/audit caps apply only to this decoy instance. Exhausting a global byte budget stops its listener and closes active sessions; a per-session input violation closes that session. Reservations occur before asynchronous writes. No visitor can raise a limit through submitted text, restart the instance, request a host interpreter or route bytes to a chosen remote endpoint. A small bounded read may occur before an over-budget input is rejected; application counters are not physical traffic meters.
+
+Budget-control records are local configuration/counter observations, not visitor interactions. They have separate provenance, and their absence from a supplied stream means unknown coverage. CPU/memory restrictions still require externally enforced container/VM controls; network floods, billed platform traffic and overall cloud spending are outside these application counters. No remote battery drain, generated workload, forced investigation, callbacks or denial-of-wallet mechanism is included.
+
+An explicitly invoked operating summary reads one selected, bounded local audit. All input records remain unverified; forged JSON, repeated tokens, missing records or manipulated timestamps cannot establish actor identity, authorization, execution or psychological traits. Classifications describe patterns such as bursts or multiple commands, not proven scanners, human operators or exploitation. The report excludes raw commands and peer identities and does not call a model, inspect customer accounts, change tenant permissions or trigger firewall/DNS enforcement. The hosted customer portal remains a separate authentication and private-import boundary.
+
 ## State experiments
 
 Process limits, packet loss and telemetry gaps are modeled in memory for a fixed number of virtual steps. The authoritative observer remains complete when the synthetic sensor loses events. No host monitoring tool is deceived or disabled. No external system is burdened and no real metered API is called.
