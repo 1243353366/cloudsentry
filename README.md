@@ -8,6 +8,16 @@ The browser application source is in [`portal/`](portal/), with [run instruction
 
 **Start at the [complete source, guide and public-link index](LINKS.md).** Source is organized on `main`; linked projects are credited below. A reference does not mean its code is installed, copied, security-reviewed, operational or endorsed.
 
+## Limitations and transparency: echo is not containment
+
+**Partial coverage is sufficient for trusted-fixture testing; it is not sufficient for a production containment claim.** Echo handlers sit at the application layer: they restrict what the application does, not what the operating system permits. A bounded, non-executing echo workload is not itself an OS, hypervisor, device or network isolation boundary.
+
+The echo components and configuration checks have been exercised and pass within their documented test scope. Passing those checks is not the same as validating the VM layers beneath them. Software TPM and disposable-image functional results also do not establish end-to-end containment. The production guest OS, hypervisor, device policy and network isolation have **not been deployed and validated together as a containment stack**; firmware/Secure Boot enforcement and production containment remain unverified.
+
+**Unverified VM/failover deployment paths remain disabled or unavailable by default. More echoes are not compensation for unverified layers.** Manually launching an individual echo service does not validate its host or VM, and static configuration acceptance or a passing application test must never be presented as production deployment approval.
+
+Before making a production containment claim, separately validate the guest OS, hypervisor, device restrictions, network isolation, resource enforcement and failure/stop behavior on the actual target environment, under explicit authorization and with negative tests and independently preserved evidence. Uploaded reports, synthetic scenarios and detector results cannot authorize deployment or change trusted production policy. Until that evidence exists, report the relevant assurance as **unknown**, not secure or contained.
+
 ## Creators, upstream work and ethical use
 
 | Creator / community | Original work | How this repository uses or references it |
