@@ -138,6 +138,12 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .provider-pill { background: #332b1e; border: 1px solid #6b5424; color: #f6c765; font-family: "Source Code Pro", monospace; font-size: .66rem; letter-spacing: .035em; line-height: 1; padding: 6px 7px; text-transform: uppercase; white-space: nowrap; }
 .status-label { align-items: center; color: #edc16d; display: inline-flex; gap: 5px; font-size: .83rem; }
 
+.integration-trust { border: 1px solid #5c4a2a; border-left: 3px solid #d99524; background: #24211c; padding: 13px 16px; margin-top: 20px; }
+.integration-trust__label { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; color: #f5c673; font-size: .92rem; }
+.integration-trust p { color: #c6bdac; font-size: .87rem; line-height: 1.5; margin: 7px 0 0; }
+.integration-trust .provider-pill { font-size: .61rem; }
+.integration-trust .mono { overflow-wrap: anywhere; }
+
 .workflow-intro { border-left: 3px solid #9b6c1c; }
 .workflow-intro > .muted-copy { max-width: 790px; }
 .workflow-steps { display: grid; gap: 1px; margin-top: 25px; background: #423b30; border: 1px solid #423b30; }

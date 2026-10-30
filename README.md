@@ -43,6 +43,33 @@ Customers may save the resulting JSON privately and deliberately import it into 
 
 See [resource budgets and operating-report details](docs/resource-economics.md). Adaptive firewall enforcement, automatic DNS sinkholing, monitored canary credentials and guaranteed attacker-cost estimates are **not** implemented. DNS proposals remain separate, ownership-confirmed and review-only.
 
+### Emergency-only manual profile
+
+`sh scripts/emergency-tarpit.sh --port 8023` starts a **new**, loopback-only silent sink with fixed 30-second service lifetime, one concurrent session, two lifetime connection attempts, five-second sessions, two-second idle timeout and small byte/rate/audit budgets. Only bind/port and explicit `--allow-public` exposure are configurable. It emits no application output, executes no visitor input and provides no OCR/counter-tool interference payload. Nothing launches it automatically, takes over an existing socket or repairs failed host containment. If the real host is compromised, isolate it through a trusted external control plane and preserve independent evidence instead of trusting a decoy. See the [emergency profile and private audit instructions](docs/emergency.md).
+
+## Optional BYOK and integration trust
+
+**No cloud-provider key is required for the core tools, offline provider analysis or manual imports.** Customer-supplied credentials are an optional, manually invoked **local** collection path—not a hosted key vault, a shared developer-key pool or automatic cloud authorization. The keyless portal remains usable when an integration is absent or unavailable. Without a key, you may still analyze a native export with the same offline rules; what changes is the available evidence, not an assurance of complete cloud visibility.
+
+| State | Meaning and boundary |
+| --- | --- |
+| **Core-only mode** | The hosted portal uses no provider keys. Profiles are metadata only; manual imports remain available. |
+| **Customer-authorized integration** | A successful explicitly invoked local read-only collector reports a bounded response at a stated time. It is not proof of lawful authority, full coverage, ongoing access or independently audited key permissions. |
+| **Integration unavailable** | Collection could not establish usable visibility. Missing credentials/dependencies, permission, network or provider failures do not mean clean accounts; no broader scan or shared-key fallback occurs. |
+| **Credential expired/revoked** | A fixed explicit provider credential-failure signal supports this local status. Generic HTTP authentication failures do not by themselves prove expiry/revocation; the cause remains unknown. |
+
+The browser displays supported status declarations from selected imports as **unverified**, alongside their claimed check time and the preserved sanitized-representation hash. It does not check the key, poll the provider, accept a report as authorization or mark a bookmark as connected. Expiry/revocation is not inferred from missing logs. Customers revoke or rotate credentials in provider-native tools and rerun a local collection only when they choose.
+
+Issue least-privilege read-only credentials yourself and pass them only to the local process as described in the [integration trust guide](docs/integration-trust.md). The collectors use fixed provider endpoints and read-only request shapes; they cannot down-scope an overprivileged key. Keys are not persisted by the collector, but environment values remain in the customer's process until cleared. Do not put credentials in command arguments, shell history, browser inputs, reports or Git. Error diagnostics omit provider bodies; output redaction is a best-effort defense, not permission to include secrets in evidence.
+
+Public CI and opt-in pre-commit secret checks are documented in [secret scanning](docs/secret-scanning.md). A passing scan reduces risk; it does not prove that every historic or future secret is absent. If exposed, revoke/rotate first and review retained copies—do not assume deleting a file revokes the key. Reduced credential custody is not legal immunity.
+
+## Engineering requirements
+
+Every subsystem must be independently testable. Every inference must preserve its evidence trail. Every integration must declare its trust boundary and failure behavior. **Modular independence is a security feature**: local collectors, decoys, scanners, reports and the customer portal do not need to execute or authorize one another. See the [engineering rules and subsystem contracts](docs/engineering-rules.md) for concrete tests, evidence rules and the threat-review checklist.
+
+The [implementation lessons and final handoff](docs/lessons-learned.md) summarize what was learned, what the release checks establish, what remains unproven and which operational choices stay with the customer.
+
 ## Consent-gated review and text indicators
 
 After an explicitly requested scan, the CLI offers a local review by default in an interactive terminal. It asks fresh permission each time and generates nothing when permission is declined, stdin is non-interactive, or input ends. The prompt and optional review use stderr so the original scan JSON remains clean on stdout. No scan is triggered automatically. See the [post-scan review guide](docs/post-scan-review.md).

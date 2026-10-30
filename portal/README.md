@@ -6,6 +6,8 @@ Provider profiles are metadata-only. Customers use Cloudflare, AWS, Render and R
 
 The live Manual workflow also explains the optional local decoy's finite byte/time/rate budgets and how to generate `python3 scripts/operations-summary.py --audit preserved-service-audit.jsonl --json` from the repository root on your own authorized machine. Deliberately import the resulting JSON as `local` after reviewing it. This portal does not start the decoy, accept the raw JSONL audit as a report, re-run the local classifier or enforce a cloud spending ceiling. Budget snapshots and low-confidence flags remain unverified supplied observations; a portal summary still asks fresh permission.
 
+The public sign-in page and customer workspace visibly show **Core-only mode**. An imported local-collector status can additionally display reported customer-authorized integration, unavailable access or an explicit credential-expiry/revocation state. Such declarations remain unverified and reference the selected import's claimed check time and sanitized-representation hash; they never authorize a cloud action. The trust interpreter is an independently tested pure function (`client/src/integration-trust.ts`), not a provider API client. The local tool's optional customer-held credentials never enter this portal or a shared developer-key pool. Read the main repository's `docs/integration-trust.md`, `docs/secret-scanning.md` and `docs/engineering-rules.md` for custody, CI/pre-commit and failure contracts.
+
 ## Source development
 
 Node.js 22 and pnpm 10.18.0 are the pinned production toolchain.

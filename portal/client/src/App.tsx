@@ -46,6 +46,7 @@ import {
   type SessionResponse,
 } from "./api";
 import { GENERIC_REQUEST_ERROR, MAX_IMPORTED_REPORT_BYTES } from "./const";
+import { describeIntegrationTrust } from "./integration-trust";
 
 const REPORT_VIEW_LIMIT = 512 * 1024;
 const SENSITIVE_KEY = /(?:access.?key|authorization|credential|cookie|pass(?:word|phrase)?|secret|session.?token|token|private.?key)/i;
@@ -137,6 +138,16 @@ function Brand({ compact = false }: { compact?: boolean }) {
       <span className="brand-wordmark"><span>Cloud</span><strong>Sentry</strong></span>
     </Link>
   );
+}
+
+function IntegrationTrustNotice({ report }: { report?: JsonObject }) {
+  const trust = describeIntegrationTrust(report);
+  return <section className="integration-trust" aria-label="Integration trust and coverage">
+    <div className="integration-trust__label"><ShieldCheck size={16} aria-hidden="true" /><strong>{trust.label}</strong>{report ? <span className="provider-pill">Unverified import</span> : null}</div>
+    <p>{trust.detail}</p>
+    {trust.checkedAtUtc ? <p className="fine-print">Supplied local check time: <span className="mono">{trust.checkedAtUtc}</span>. The portal does not poll or revalidate provider access.</p> : null}
+    {trust.evidenceDigest ? <p className="fine-print">Imported sanitized representation SHA-256: <span className="mono">{trust.evidenceDigest}</span>. This is a processing reference, not source authentication.</p> : null}
+  </section>;
 }
 
 function BusyLabel({ children }: { children: ReactNode }) {
@@ -270,6 +281,7 @@ function HomePage() {
             <span><FolderOpen size={16} aria-hidden="true" /> Metadata-only profiles</span>
             <span><FileUp size={16} aria-hidden="true" /> Explicit JSON imports</span>
           </div>
+          <IntegrationTrustNotice />
         </div>
         <div className="hero-login-wrap"><LoginPanel /></div>
       </section>
@@ -317,7 +329,7 @@ function AuthenticatedShell({ title, children }: { title: string; children: Reac
           <button className="button button--ghost logout-button" type="button" disabled={logoutBusy} onClick={() => void handleLogout()}>{logoutBusy ? <BusyLabel>Signing out</BusyLabel> : <><LogOut size={16} aria-hidden="true" />Sign out</>}</button>
         </div>
       </aside>
-      <main className="portal-main"><div className="portal-heading"><p className="eyebrow">CloudSentry / customer workspace</p><h1>{title}</h1></div>{children}</main>
+      <main className="portal-main"><div className="portal-heading"><p className="eyebrow">CloudSentry / customer workspace</p><h1>{title}</h1><IntegrationTrustNotice /></div>{children}</main>
     </div>
   );
 }
@@ -504,10 +516,25 @@ function ManualWorkflowPage() {
           <pre className="report-code">{"python3 scripts/operations-summary.py --audit preserved-service-audit.jsonl --json"}</pre>
           <p>Save the JSON privately, review it, then import that selected report as provider <span className="mono">local</span>. Do not upload the raw JSONL audit here. Generating a portal summary still asks fresh permission; it does not re-run the local classifier.</p>
           <p className="disclaimer-copy">Connection-only, probe-like, burst, multi-command and execution-related text flags are low-confidence patterns in supplied records—not proof of an attacker, human operator, execution, real access or identity. Budget counters are unverified application reservations, not remote resource use or confirmed wire delivery. Missing records mean unknown coverage.</p>
+          <p><strong>Emergency-only local option:</strong> <span className="mono">sh scripts/emergency-tarpit.sh --port 8023</span> starts a new silent, non-executing sink with fixed 30-second lifetime and low budgets. It does not take over existing sockets, interfere with OCR, repair a compromised host or start from this website. Isolate a suspected real host using a trusted provider/network control plane.</p>
+          <a className="documentation-link" href="https://github.com/1243353366/cloudsentry/blob/main/docs/emergency.md" target="_blank" rel="noopener external"><BookOpen size={16} aria-hidden="true" />Read emergency opt-in and evidence instructions<ArrowUpRight size={15} aria-hidden="true" /></a>
           <div className="form-actions">
             <Link className="button button--primary" href="/evidence">Import selected report<FileUp size={16} aria-hidden="true" /></Link>
             <a className="documentation-link" href="https://github.com/1243353366/cloudsentry/blob/main/docs/resource-economics.md" target="_blank" rel="noopener external"><BookOpen size={16} aria-hidden="true" />Read resource-budget guide<ArrowUpRight size={15} aria-hidden="true" /></a>
           </div>
+        </Panel>
+        <Panel>
+          <p className="eyebrow">Optional local BYOK • no hosted key vault</p>
+          <h2>Extra visibility is your explicit choice.</h2>
+          <p>Core tools and manual imports work without provider keys. For optional collection, run the local <span className="mono">collect-cloud</span> command on your authorized machine using customer-issued, least-privilege credentials and an explicit scope and time window. Do not paste keys into this website, reports, shell history or Git.</p>
+          <div className="workflow-steps">
+            <div><span>01</span><p><strong>Core-only mode:</strong> no provider credential is needed; a profile is bookmark metadata, not account access. Native exports can still be analyzed offline.</p></div>
+            <div><span>02</span><p><strong>Customer-authorized integration:</strong> a local collector reports a bounded read-only response at a stated time. Imported status is an unverified declaration, not a live portal connection or permission audit.</p></div>
+            <div><span>03</span><p><strong>Integration unavailable:</strong> missing credentials, transport/service/permission issues or unsupported input leave visibility unavailable or unknown. No shared-key fallback or automatic scan occurs.</p></div>
+            <div><span>04</span><p><strong>Credential expired/revoked:</strong> shown as reported only with explicit local status; a generic authentication error or empty report does not prove expiry or revocation. Revoke/rotate natively, then rerun locally only if you choose.</p></div>
+          </div>
+          <p className="disclaimer-copy">Local collectors do not persist a provider key vault. Credentials remain in your process environment until you clear it; there is no guaranteed memory wipe. Read-only requests do not down-scope an overprivileged key. Revocation and cloud spending controls remain yours. Reduced credential custody does not eliminate legal responsibility.</p>
+          <a className="documentation-link" href="https://github.com/1243353366/cloudsentry/blob/main/docs/integration-trust.md" target="_blank" rel="noopener external"><BookOpen size={16} aria-hidden="true" />Read permissions, opt-in and failure rules<ArrowUpRight size={15} aria-hidden="true" /></a>
         </Panel>
       </div>
     </RequireSession>
@@ -573,7 +600,7 @@ function ReportPanel({ detail, label, onOpenSummary }: { detail: ImportedReportD
     }
   };
 
-  return <div className="content-column"><Panel className="report-panel"><div className="section-heading section-heading--top-align"><div><p className="eyebrow">Bounded imported report</p><h2>Imported report <span className="mono">#{detail.scanId}</span></h2><p className="report-source"><ShieldCheck size={15} aria-hidden="true" />{label}</p></div><div className="report-actions"><button className="button button--secondary" type="button" onClick={() => void copy()}><Clipboard size={16} aria-hidden="true" />Copy filtered JSON</button><button className="button button--secondary" type="button" onClick={() => downloadJson(`cloudsentry-import-${detail.scanId}.json`, report)}><Download size={16} aria-hidden="true" />Download filtered JSON</button></div></div>{copyStatus === "copied" ? <p className="success-copy" role="status">Filtered report JSON copied.</p> : null}{copyStatus === "failed" ? <p className="validation-copy" role="status">Copy was unavailable in this browser. You can still download the filtered JSON.</p> : null}<p className="disclaimer-copy">The portal redacts credential-like fields and bounds this display. Imported JSON remains customer-supplied and unverified. A canonical JSON hash, if present in a report, is a processing reference—not raw-byte authentication, proof of origin, authorization, or an identity claim. Your original file remains outside this portal.</p><pre className="report-code">{preparedJson}</pre></Panel>{detail.summary ? <SummaryDisplay summary={detail.summary} onRegenerate={onOpenSummary} /> : <Panel className="summary-offer"><div><p className="eyebrow">Optional review</p><h2>No summary has been generated in this view.</h2><p>Generate one only with a new, explicit approval for this imported report.</p></div><button className="button button--primary" type="button" onClick={onOpenSummary}>Request summary<ChevronRight size={16} aria-hidden="true" /></button></Panel>}</div>;
+  return <div className="content-column"><IntegrationTrustNotice report={detail.report} /><Panel className="report-panel"><div className="section-heading section-heading--top-align"><div><p className="eyebrow">Bounded imported report</p><h2>Imported report <span className="mono">#{detail.scanId}</span></h2><p className="report-source"><ShieldCheck size={15} aria-hidden="true" />{label}</p></div><div className="report-actions"><button className="button button--secondary" type="button" onClick={() => void copy()}><Clipboard size={16} aria-hidden="true" />Copy filtered JSON</button><button className="button button--secondary" type="button" onClick={() => downloadJson(`cloudsentry-import-${detail.scanId}.json`, report)}><Download size={16} aria-hidden="true" />Download filtered JSON</button></div></div>{copyStatus === "copied" ? <p className="success-copy" role="status">Filtered report JSON copied.</p> : null}{copyStatus === "failed" ? <p className="validation-copy" role="status">Copy was unavailable in this browser. You can still download the filtered JSON.</p> : null}<p className="disclaimer-copy">The portal redacts credential-like fields and bounds this display. Imported JSON remains customer-supplied and unverified. A canonical JSON hash, if present in a report, is a processing reference—not raw-byte authentication, proof of origin, authorization, or an identity claim. Your original file remains outside this portal.</p><pre className="report-code">{preparedJson}</pre></Panel>{detail.summary ? <SummaryDisplay summary={detail.summary} onRegenerate={onOpenSummary} /> : <Panel className="summary-offer"><div><p className="eyebrow">Optional review</p><h2>No summary has been generated in this view.</h2><p>Generate one only with a new, explicit approval for this imported report.</p></div><button className="button button--primary" type="button" onClick={onOpenSummary}>Request summary<ChevronRight size={16} aria-hidden="true" /></button></Panel>}</div>;
 }
 
 function sourceProviderFromText(raw: string): ReportProvider | null {

@@ -66,25 +66,131 @@ _ALWAYS_DROPPED_KEYS = {
     "rawsecretfields",
 }
 
+# Integration state is intentionally a small, safe vocabulary.  It describes only
+# this explicit local request; it is not an assertion of continuing authorization,
+# provider-side permission, or token validity after the request completes.
+_INTEGRATION_SOURCE = "local_explicit_collection"
+_SUCCESS_STATE = "customer_authorized_integration"
+_UNAVAILABLE_STATE = "integration_unavailable"
+_EXPIRED_OR_REVOKED_STATE = "credential_expired_or_revoked"
+_SUCCESS_REASON = "bounded_read_only_request_completed"
+_UNKNOWN_REASON = "unknown_failure"
+_AUTHENTICATION_FAILED_REASON = "authentication_failed"
+_PERMISSION_DENIED_REASON = "permission_denied"
+_CREDENTIAL_EXPIRED_REASON = "credential_expired"
+_MISSING_CREDENTIALS_REASON = "missing_credentials"
+_OPTIONAL_DEPENDENCY_REASON = "optional_dependency_unavailable"
+_SCOPE_MISMATCH_REASON = "scope_mismatch"
+_UNSUPPORTED_PROVIDER_REASON = "unsupported_provider"
+_SAFE_FAILURE_REASONS = frozenset(
+    {
+        _UNKNOWN_REASON,
+        _AUTHENTICATION_FAILED_REASON,
+        _PERMISSION_DENIED_REASON,
+        _CREDENTIAL_EXPIRED_REASON,
+        _MISSING_CREDENTIALS_REASON,
+        _OPTIONAL_DEPENDENCY_REASON,
+        _SCOPE_MISMATCH_REASON,
+        _UNSUPPORTED_PROVIDER_REASON,
+    }
+)
+_PROVIDER_CREDENTIAL_ENV = {
+    "cloudflare": ("CLOUDFLARE_API_TOKEN",),
+    "aws": ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"),
+    "render": ("RENDER_API_KEY",),
+    "railway": ("RAILWAY_API_TOKEN",),
+}
+# These patterns cover documented AWS credential-shaped values when an event uses an
+# unhelpful field name.  Other provider values are still redacted when they exactly
+# match the active credential for the explicitly selected provider.
+_CREDENTIAL_VALUE_PATTERNS = (
+    re.compile(r"\b(?:AKIA|ASIA|AGPA|AIDA|AROA)[A-Z0-9]{16}\b"),
+    re.compile(
+        r"\b(?:bearer|token|api[ _-]?key|secret|credential|access[ _-]?key)\b"
+        r"\s*(?::|=|\s)\s*(?:['\"])?[A-Za-z0-9._~+/=-]{8,}",
+        re.IGNORECASE,
+    ),
+)
+
+
+def _checked_at_utc() -> str:
+    return _datetime.datetime.now(_datetime.timezone.utc).isoformat(
+        timespec="seconds"
+    ).replace("+00:00", "Z")
+
+
+def _integration_status(
+    state: str,
+    reason: str,
+    coverage: str,
+) -> dict[str, Any]:
+    """Return the fixed, credential-free integration-status envelope."""
+
+    return {
+        "state": state,
+        "reason": reason,
+        "source": _INTEGRATION_SOURCE,
+        "read_only_requests": True,
+        "coverage": coverage,
+        "credentials_retained": False,
+        "checked_at_utc": _checked_at_utc(),
+    }
+
+
+def _failure_integration_status(reason: str) -> dict[str, Any]:
+    """Map a fixed reason to a deliberately non-diagnostic failure status."""
+
+    safe_reason = reason if reason in _SAFE_FAILURE_REASONS else _UNKNOWN_REASON
+    state = (
+        _EXPIRED_OR_REVOKED_STATE
+        if safe_reason == _CREDENTIAL_EXPIRED_REASON
+        else _UNAVAILABLE_STATE
+    )
+    return _integration_status(state, safe_reason, "unavailable")
+
 
 class CloudCollectionError(RuntimeError):
     """A safe-to-display collection failure with no provider response body."""
+
+    default_safe_reason = _UNKNOWN_REASON
+
+    def __init__(self, message: str, *, safe_reason: str | None = None) -> None:
+        super().__init__(message)
+        reason = safe_reason or self.default_safe_reason
+        self.safe_reason = reason if reason in _SAFE_FAILURE_REASONS else _UNKNOWN_REASON
+        # These fixed values let a caller that continues to report exceptions (such
+        # as the CLI) present an honest status without parsing a provider message.
+        self.integration_reason = self.safe_reason
+        self.integration_state = (
+            _EXPIRED_OR_REVOKED_STATE
+            if self.safe_reason == _CREDENTIAL_EXPIRED_REASON
+            else _UNAVAILABLE_STATE
+        )
+        self.integration_status = _failure_integration_status(self.safe_reason)
 
 
 class MissingCredentialError(CloudCollectionError):
     """The explicit environment credential for the selected provider is absent."""
 
+    default_safe_reason = _MISSING_CREDENTIALS_REASON
+
 
 class UnsupportedProvider(CloudCollectionError):
     """The requested provider has no deliberately supported read-only adapter."""
+
+    default_safe_reason = _UNSUPPORTED_PROVIDER_REASON
 
 
 class ScopeMismatchError(CloudCollectionError):
     """AWS STS identity did not match the caller-supplied account scope."""
 
+    default_safe_reason = _SCOPE_MISMATCH_REASON
+
 
 class OptionalDependencyError(CloudCollectionError):
     """The requested optional provider SDK is not installed."""
+
+    default_safe_reason = _OPTIONAL_DEPENDENCY_REASON
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -141,7 +247,13 @@ def collect_cloud(
     except CloudCollectionError as exc:
         # Provider error bodies and transport exception strings are intentionally not
         # retained: they can echo request data or authorization material.
-        return _empty_result(normalized_provider, since, until, warnings=[str(exc)])
+        return _empty_result(
+            normalized_provider,
+            since,
+            until,
+            warnings=[str(exc)],
+            error=exc,
+        )
 
 
 def _validate_scope_id(scope_id: str) -> None:
@@ -270,7 +382,10 @@ def _collect_aws(
                                     endpoint_url=f"https://sts.{selected_region}.{aws_suffix}")
         identity = sts_client.get_caller_identity()
     except Exception as exc:  # SDK exceptions can include provider diagnostics.
-        raise CloudCollectionError("AWS STS identity check failed") from None
+        raise CloudCollectionError(
+            "AWS STS identity check failed",
+            safe_reason=_aws_sdk_failure_reason(exc),
+        ) from None
     if not isinstance(identity, Mapping) or identity.get("Account") != scope_id:
         raise ScopeMismatchError("AWS STS account did not match the requested account scope")
 
@@ -313,7 +428,10 @@ def _collect_aws(
     except CloudCollectionError:
         raise
     except Exception as exc:  # Never expose a provider exception or request data.
-        raise CloudCollectionError("AWS CloudTrail lookup failed") from None
+        raise CloudCollectionError(
+            "AWS CloudTrail lookup failed",
+            safe_reason=_aws_sdk_failure_reason(exc),
+        ) from None
 
     if region is None:
         warnings.append("AWS region was not supplied; the fixed region us-east-1 was used.")
@@ -510,6 +628,39 @@ def _fixed_url(host: str, path: str, query: Mapping[str, str] | None = None) -> 
     return urllib.parse.urlunsplit(("https", host, path, encoded_query, ""))
 
 
+def _http_failure_reason(status_code: Any) -> str:
+    """Classify only the two HTTP statuses with an intentionally fixed meaning."""
+
+    if status_code == 401:
+        return _AUTHENTICATION_FAILED_REASON
+    if status_code == 403:
+        return _PERMISSION_DENIED_REASON
+    return _UNKNOWN_REASON
+
+
+def _aws_sdk_failure_reason(exc: BaseException) -> str:
+    """Recognize only explicit AWS expiry codes from a normal SDK response dict.
+
+    SDK exception text and arbitrary response-like objects can contain credentials or
+    request data.  Do not stringify, iterate, or return them.  Botocore's typed
+    exceptions expose a plain ``response`` dict; anything else remains unknown.
+    """
+
+    try:
+        response = getattr(exc, "response", None)
+        if not isinstance(response, dict):
+            return _UNKNOWN_REASON
+        error = dict.get(response, "Error")
+        if not isinstance(error, dict):
+            return _UNKNOWN_REASON
+        code = dict.get(error, "Code")
+    except Exception:
+        return _UNKNOWN_REASON
+    if code in {"ExpiredToken", "ExpiredTokenException"}:
+        return _CREDENTIAL_EXPIRED_REASON
+    return _UNKNOWN_REASON
+
+
 def _request_json(
     url: str,
     headers: Mapping[str, str],
@@ -542,7 +693,17 @@ def _request_json(
         with opener.open(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
             raw = response.read(MAX_RESPONSE_BYTES + 1)
     except urllib.error.HTTPError as exc:
-        raise CloudCollectionError(f"cloud HTTP request failed with status {exc.code}") from None
+        status_code = exc.code if isinstance(exc.code, int) else None
+        reason = _http_failure_reason(status_code)
+        message = (
+            f"cloud HTTP request failed with status {status_code}"
+            if status_code is not None
+            else "cloud HTTP request failed"
+        )
+        raise CloudCollectionError(
+            message,
+            safe_reason=reason,
+        ) from None
     except (urllib.error.URLError, OSError, TimeoutError) as exc:
         raise CloudCollectionError("cloud HTTP request failed") from None
     if len(raw) > MAX_RESPONSE_BYTES:
@@ -570,8 +731,26 @@ def _ensure_bounded_sdk_response(response: Any) -> None:
         raise CloudCollectionError("AWS CloudTrail response exceeded the 8 MiB safety limit")
 
 
-def _empty_result(provider: str, since: str, until: str, *, warnings: list[str]) -> dict[str, Any]:
-    return _result(provider, since, until, [], 0, True, warnings)
+def _empty_result(
+    provider: str,
+    since: str,
+    until: str,
+    *,
+    warnings: list[str],
+    error: CloudCollectionError,
+) -> dict[str, Any]:
+    """Return a failed collection result, never an empty successful sample."""
+
+    return _result(
+        provider,
+        since,
+        until,
+        [],
+        0,
+        True,
+        warnings,
+        integration_status=_failure_integration_status(error.safe_reason),
+    )
 
 
 def _result(
@@ -584,6 +763,7 @@ def _result(
     warnings: list[str],
     *,
     extra_coverage: Mapping[str, Any] | None = None,
+    integration_status: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     coverage: dict[str, Any] = {
         "requested_since": since,
@@ -597,19 +777,55 @@ def _result(
     }
     if extra_coverage:
         coverage.update(extra_coverage)
+    status = integration_status or _integration_status(
+        _SUCCESS_STATE,
+        _SUCCESS_REASON,
+        "bounded_sample",
+    )
+    credential_values = _active_provider_credential_values(provider)
+    safe_warnings = [
+        _sanitize_return_text(warning, credential_values) for warning in warnings
+    ]
     return {
         "provider": provider,
         "source": "manual_read_only_cloud_api",
-        "events": [_sanitize_event(event) for event in events[:MAX_EVENTS]],
+        "events": [
+            _sanitize_event(
+                event,
+                credential_values=credential_values,
+            )
+            for event in events[:MAX_EVENTS]
+        ],
         "coverage": coverage,
-        "warnings": list(warnings)
+        "integration_status": dict(status),
+        "warnings": safe_warnings
         + [
             "Cloud collection is manually invoked, bounded, and incomplete; empty results are not an all-clear assessment."
         ],
     }
 
 
-def _sanitize_event(value: Any, depth: int = 0) -> Any:
+def _active_provider_credential_values(provider: str) -> frozenset[str]:
+    """Read only the selected provider's exact active credential values for redaction.
+
+    Values are neither cached nor returned.  This is deliberately not credential
+    discovery: the collector has already read only these documented environment names
+    for the explicitly selected provider.
+    """
+
+    return frozenset(
+        value
+        for name in _PROVIDER_CREDENTIAL_ENV.get(provider, ())
+        if isinstance((value := os.environ.get(name)), str) and value
+    )
+
+
+def _sanitize_event(
+    value: Any,
+    depth: int = 0,
+    *,
+    credential_values: frozenset[str] = frozenset(),
+) -> Any:
     """Remove secret-bearing fields and bound field size/depth before output."""
 
     if depth > 32:
@@ -617,21 +833,32 @@ def _sanitize_event(value: Any, depth: int = 0) -> Any:
     if isinstance(value, Mapping):
         cleaned: dict[str, Any] = {}
         for key, child in value.items():
-            key_text = str(key)
-            if _is_sensitive_key(key_text):
+            raw_key_text = str(key)
+            if _is_sensitive_key(raw_key_text):
                 continue
-            cleaned[key_text] = _sanitize_event(child, depth + 1)
+            key_text = _sanitize_credential_values(raw_key_text, credential_values)
+            cleaned[key_text] = _sanitize_event(
+                child,
+                depth + 1,
+                credential_values=credential_values,
+            )
         return cleaned
     if isinstance(value, list):
         # Response and event-count limits already bound total data.  This guard also
         # avoids retaining a single pathological nested collection.
-        return [_sanitize_event(item, depth + 1) for item in value[:MAX_EVENTS]]
+        return [
+            _sanitize_event(item, depth + 1, credential_values=credential_values)
+            for item in value[:MAX_EVENTS]
+        ]
     if isinstance(value, tuple):
-        return [_sanitize_event(item, depth + 1) for item in value[:MAX_EVENTS]]
+        return [
+            _sanitize_event(item, depth + 1, credential_values=credential_values)
+            for item in value[:MAX_EVENTS]
+        ]
     if isinstance(value, str):
         if len(value.encode("utf-8", errors="replace")) > MAX_FIELD_BYTES:
             return "[omitted: oversized field]"
-        return value
+        return _sanitize_credential_values(value, credential_values)
     if isinstance(value, (bytes, bytearray, memoryview)):
         return "[omitted: binary field]"
     if value is None or isinstance(value, (bool, int, float)):
@@ -639,7 +866,30 @@ def _sanitize_event(value: Any, depth: int = 0) -> Any:
     text = str(value)
     if len(text.encode("utf-8", errors="replace")) > MAX_FIELD_BYTES:
         return "[omitted: oversized field]"
-    return text
+    return _sanitize_credential_values(text, credential_values)
+
+
+def _sanitize_credential_values(value: str, credential_values: frozenset[str]) -> str:
+    """Redact exact selected-provider values and narrow known credential patterns."""
+
+    cleaned = value
+    # Sorting longest-first avoids leaving a suffix visible when one configured value
+    # happens to contain another.  The values are transient local variables only.
+    for credential in sorted(credential_values, key=len, reverse=True):
+        cleaned = cleaned.replace(credential, "[redacted credential]")
+    for pattern in _CREDENTIAL_VALUE_PATTERNS:
+        cleaned = pattern.sub("[redacted credential]", cleaned)
+    return cleaned
+
+
+def _sanitize_return_text(value: Any, credential_values: frozenset[str]) -> str:
+    """Return safe text for the narrow set of free-form strings in an output result."""
+
+    if not isinstance(value, str):
+        return "[omitted: non-text value]"
+    if len(value.encode("utf-8", errors="replace")) > MAX_FIELD_BYTES:
+        return "[omitted: oversized field]"
+    return _sanitize_credential_values(value, credential_values)
 
 
 def _is_sensitive_key(key: str) -> bool:
