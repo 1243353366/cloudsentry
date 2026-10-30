@@ -17,6 +17,8 @@ This source release adds independent opt-in static configuration auditing, a con
 
 The publisher separately checks redacted secret scanning and public CI; do not infer a completed GitHub run from this local table. A repository push, saved website checkpoint and successful website deployment are separate events.
 
+**Still unproven:** firmware/Secure Boot enforcement and production VM containment — [see the containment note](../README.md#limitations-and-transparency-echo-is-not-containment).
+
 ## Reproduce the useful demonstrations
 
 After following the [auditor setup](config-auditor-integration.md), run:
