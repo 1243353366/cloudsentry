@@ -4,6 +4,10 @@
 
 This repository has a working bounded echo service and non-executing analysis options. It does **not** currently have an automatic VM/desktop provisioning adapter, a verified remote failover controller, a floating-IP/proxy deployment or a live PC-Free backup. Untrusted logs cannot declare a backend verified, select an outbound destination, grant permission or trigger paid provisioning.
 
+The manual hardening implementation now merges both backend candidates behind [strict candidate generation/admission](vm-backup-hardening.md) and a [shared two-surface echo workload](backup-echo.md). Generation/review never executes a VM; static acceptance always leaves `ready_for_deployment: false`. Customer check and visitor slots echo independently, without callbacks or cross-slot forwarding. A [layer smoke harness](backup-echo.md#smoke-every-implemented-layer-then-test-the-smoke-harness) also tests its own deliberate-failure controls. Actual VM boot, hardware and routing remain separately unverified.
+
+The requested [Openterface KVM-GO hardware](openterface-console.md) is a privileged physical administrator console, not the Linux KVM hypervisor. The requested [VMBoot concept](vmboot-boundary.md) informs a separately disabled firmware-research role; this project does not inherit its flashing, arbitrary boot-media discovery or execution path. Manual configuration, guest workload and evidence stay separate from firmware/USB/host authority.
+
 ## Primary — verified customer analysis VM
 
 Prepare a disposable guest on a separate analysis host as described in [manual VM setup](vm-setup.md). Host control, outside-guest evidence, ingress/egress rules and resource/time limits remain with an independent trusted controller. Real dynamic execution stays unavailable until that backend is implemented and verified; a detector claiming a compromise is not permission to execute anything or create a VM.

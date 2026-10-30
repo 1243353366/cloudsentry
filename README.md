@@ -94,6 +94,27 @@ The exporter prints the manifest digest for preservation **outside the packet** 
 
 The [three-layer fallback instructions](docs/fallback-layers.md) describe **bounded echo on each customer-controlled layer**: primary VM, separately hardened PC-Free Windows backup and isolated emergency echo. The real VM/backup/floating-proxy controller is not implemented. PC-Free's published defaults are not automatically trusted or installed; it remains an unverified backup candidate until independently hardened and validated. Detection or uploaded “verified” flags cannot grant permission to provision it.
 
+### Merged manual VM and backup hardening
+
+The [candidate generator/reviewer](docs/vm-backup-hardening.md) now supports **both** conservative QEMU/KVM/libvirt XML and an offline PC-Free-derived Compose JSON profile. It admits only exact bounded grammars plus an externally supplied document pin. No NIC/public management ports, host sharing, arbitrary boot hooks, guest USB/console access, restart loop or imported authorization is added. Static acceptance always leaves `ready_for_deployment: false`; hardware isolation, image provenance, runtime limits and routing require separate validation.
+
+```sh
+# Build review text only; no VM, provider resource or firmware is started.
+python3 scripts/review-backup.py --backend libvirt --emit-candidate --consent
+
+# Run inside a separately approved isolated guest; both ports are inward-only.
+sh scripts/backup-echo.sh --consent
+
+# Test each implemented layer, including deliberate failures of the smoke harness.
+python3 scripts/smoke-backup-layers.py --consent
+```
+
+The [shared guest workload](docs/backup-echo.md) opens two independent bounded echo surfaces (loopback ports 8022/8023 by default). Each connection receives **only its own bytes**, with no cross-port forwarding, outgoing callback, real interpreter execution or privileged operator shell. Permission loss, startup failure or a stop in one surface closes the pair. Exposure beyond loopback needs separate explicit opt-in and independently reviewed ingress; a disconnected guest has no remote visitor path by itself.
+
+The requested [Openterface KVM-GO hardware](docs/openterface-console.md) belongs only to a dedicated administrator's physical console, never the visitor echo/control plane. Its USB keyboard/video/mouse role is not the Linux KVM hypervisor. The requested [VMBoot project](docs/vmboot-boundary.md) contributes a firmware-research concept, not an automatically enabled boot/flashing workflow. This implementation repurposes the manual isolation/admission ideas without copying privileged firmware execution into customer data paths. Real VM boots, VMBoot firmware and KVM-GO hardware were **not tested or deployed** in this sandbox.
+
+The [15-section defensive lab assessment](docs/backup-lab-assessment.md) records the observed inventory, methodology, architecture, boot/isolation/network/monitoring gaps, risk-scoring limitations and next validation steps. The merged local suite passed **323 tests**, and five software smoke layers plus 14 harness controls passed. These results establish only the tested finite software behavior. No guest boot, Secure Boot/TPM, real snapshot recovery, EDR, external ingress or hardware safety verdict is implied; deployment remains blocked until those prerequisites are independently verified.
+
 The separate optional `scripts/analyze-safely.py` provides static inspection and an explicitly synthetic virtual computer. It does not execute real samples. A real-VM requirement fails closed rather than silently running malware on the customer's device or treating a container/synthetic console as a VM. See the [virtual-analysis boundaries](docs/virtual-analysis.md); real disposable-VM provisioning, guest telemetry and VM-escape validation are not implemented or claimed.
 
 The [optional corpus runner](docs/prompt-injection-corpus.md) can test a customer-authorized local JSONL export or the repository's **original synthetic examples** against an ephemeral, finite loopback-only mirror. It requires fresh consent, retains hashes rather than raw prompts and offers no external target selection. The linked third-party database remains access-gated; this project did not scrape it, redistribute its full dataset, install code on its website or submit a contribution. Exact echo is not proof of LLM injection detection or jailbreak resistance.

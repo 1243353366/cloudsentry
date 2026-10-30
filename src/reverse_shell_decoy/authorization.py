@@ -18,7 +18,7 @@ from typing import Iterator
 __all__ = ["AuthorizationError", "AuthorizationGrant", "AuthorizationScope",
            "cancellation_guard", "request_authorization"]
 _OPERATIONS = frozenset({"train", "explain", "static_analysis", "synthetic_analysis",
-                         "mirror_regression", "verify_evidence"})
+                         "mirror_regression", "verify_evidence", "backup_echo"})
 _MAX_REF_LENGTH = 4096
 _GRANT_TTL_SECONDS = 300.0
 _ISSUANCE_TOKEN = object()
