@@ -29,6 +29,14 @@ Imports are customer-selected, bounded JSON, not commands. They remain unverifie
 
 Offline network-boundary review compares only supplied IPv4/IPv6 CIDR definitions and routes. It does not probe ARP, DHCP, reachability or actual firewall enforcement. Language indicators are fixed text labels, not execution or attacker capability scores. Synthetic decoy effects are not proof of unauthorized access to a real machine.
 
+## Customer inference and supplied content are different scopes
+
+The privacy bound is on inferences about a customer or another person, not on treating every content match as a personal characteristic. Supplied text may be quoted, copied, third-party or synthetic; the uploader is not necessarily its author. Reviews require fresh permission and do not authorize broad customer profiling, sensitive-trait inference, account-history harvesting or cross-service surveillance.
+
+Text, PDFs and uploads fall under **content-only pattern matching** conceptually. This may have a broad analytical scope, but “unbounded” does not remove operational file-size/time limits or authorize collection beyond the selected material. The portal currently accepts bounded JSON scan results, not arbitrary text/PDF uploads; no general PDF parser, sentence/vocabulary statistics, stylistic attribution or automatic behavioral profiling has been implemented.
+
+The [main README's bounded review guidance](../README.md#customer-inference-versus-document-content-matching) explains sentence structure, vocabulary distribution, punctuation, syntactic complexity, repeated patterns, contextual behavioral observations and changes from a genuinely established baseline. It also explains why independent evidence must retain its own provenance: neither a text match nor a synthetic interaction proves the meaning, authorship or authorization status of another record.
+
 Known credential-shaped metadata is rejected and obvious credential fields in imports are sanitized. Automated recognition is conservative and cannot recognize every arbitrary secret. Never place credentials or unrelated personal data into labels or selected reports.
 
 The local CLI, virtual terminal and bounded mirror are documented in the repository root. No visitor interpreter, reverse callback, cloud scanning worker, hidden persistence, infinite hold or automatic remediation is part of this web app.

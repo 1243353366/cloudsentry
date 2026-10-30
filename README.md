@@ -28,6 +28,43 @@ The standalone review also asks permission before reading the selected files. It
 
 The virtual terminal defaults to a PHP metadata catalog: `php -v`, `php -m` and `which` return canned values. No PHP interpreter is installed or run by this feature; script execution and other interpreter attempts remain blocked. The [text-indicator trail](docs/trail.md) retains only bounded, fixed language/token labels, source context and hashes—not raw one-liners, skill scores or allegations. Mirror mode remains an opaque, bounded byte reflector and does not present or interpret this catalog.
 
+## Customer inference versus document-content matching
+
+**The privacy bound applies to conclusions about a customer or another person. Content matching is a different operation.** Finding a string or repeated pattern in a supplied document does not establish who wrote it, why it was written, or anything about the customer's personality. Uploaded material may contain quotations, copied commands, third-party messages, templates or synthetic text; the uploader is not automatically its author.
+
+Customer-related review is limited to explicitly selected, authorized material and the context needed for the task. Users choose the inputs; each review or summary asks fresh permission. That permission does not authorize ongoing surveillance, account-history harvesting, cross-service tracking, hidden dossiers or sensitive-trait inference. Automated stylistic identity attribution, psychological profiling and intelligence/competence scoring are not features of this tool.
+
+For **text, PDFs and other uploads**, the intended distinction is content-only pattern matching: examine the supplied material for relevant patterns without converting those matches into a profile of a person. “Unbounded” here means that the customer-inference restriction is not a limit on which relevant content patterns may be considered; it does **not** mean unlimited file size, execution time, memory, retention or collection beyond the selected input. Operational input and resource limits still apply. Obvious credentials and unrelated personal information should be removed, and permission to upload a file is not permission to profile everyone mentioned in it.
+
+**Current support:** the CLI accepts selected text/JSONL logs and documented cloud exports; the browser portal imports bounded JSON scan results. There is no general PDF-upload/parser feature or general-purpose linguistic-analysis engine. PDFs belong to the content-matching category conceptually, but this README does not claim that PDF ingestion has been implemented. Do not pass a PDF to a text/JSON importer and expect extraction.
+
+The implemented automation is deliberately narrow: the CLI's text classifier examines at most 4,096 characters per input and returns fixed language/token identifiers; the trail aggregates those identifiers with source hashes and available timestamps. The browser summary considers at most 256 entries from one selected event-array field and keeps only its allowed labels/verbs. These are text indicators, not measurements of sentence structure or a customer's abilities. Audit hashes cannot reconstruct discarded sentences or support vocabulary statistics by themselves.
+
+### Communication patterns and changes from a baseline
+
+The following is **bounded review guidance**, not an automatically generated customer profile or a promise that these linguistic metrics are computed. If legitimately retained communications are available for an authorized review, record observations about that selected text separately from any inference about its author.
+
+| Review dimension | What to compare in selected communications | What it does not establish |
+| --- | --- | --- |
+| Sentence structure | Fragments, complete sentences, request forms and instruction length. | Identity, intent or competence. |
+| Vocabulary distribution | Repeated words, terminology and relative frequencies in comparable samples. | A person's background or stable traits. |
+| Punctuation habits | Commas, ellipses, quoting, capitalization and list formatting. | Authorship; copied material or formatting can account for a match. |
+| Syntactic complexity | Clause combinations and nesting in the actual retained text. | Intelligence, education or a clinical condition. |
+| Repeated linguistic patterns | Recurring phrases, formulations or templates, with quotations kept separate. | That repeated text comes from one person. |
+| Behavioral inference | Observable requests or actions in their stated context, labelled as observations or hypotheses. | Motive, maliciousness or authorization status. |
+
+Ask whether there are meaningful changes in communication patterns only when the baseline and comparison material are sufficiently comparable. Document the source, available event times, language, channel, task and sample limitations. If authorship, context or the baseline is unknown, report **unknown** rather than manufacturing a personal baseline.
+
+Review may note **changes in terminology, unusual requests, changes in writing consistency, repeated behavioral patterns and deviations from an established baseline**. Describe the difference and retain alternative explanations: a new task, quoting, templates, translation, editing, assisted writing or a different contributor. A style change or unusual request is a lead for contextual review, not an automatic compromise verdict. The current tool does not calculate statistical significance or automatically decide whether such a change is meaningful.
+
+### Correlate independent evidence without collapsing it into proof
+
+Keep customer assertions, unverified imported text, local host observations, independently obtained authentication/network/cloud records and synthetic decoy effects in separate provenance categories. Correlate available timestamps and relevant identifiers while preserving clock uncertainty, missing coverage and disagreements. An account or endpoint reference does not by itself identify a person.
+
+Distinguish a genuinely independent source from a second copy, export or summary of the same underlying event. Do not count duplicated evidence as corroboration. A shared word, token, hash or timestamp can connect review items but does not turn a text pattern into proof of execution, or a simulated root prompt into proof of unauthorized real-host access. A hash documents representation consistency; it does not authenticate an author or establish authorization.
+
+For example, a supplied message containing a network-function name is a **text-pattern observation**; a local socket snapshot is a **host observation**; a preserved sign-in event from another source is a **separate authentication record**. Their time and context may justify further investigation. None automatically proves the meaning or attribution of the others. State what each source supports, what it does not support, competing explanations, and what further independent evidence would be needed. Preserve original evidence separately; do not convert these review leads into legal allegations or automatic account/remediation decisions.
+
 ## Install
 
 Python 3.10+ is required. The core runtime uses only the Python standard library; optional manual AWS API collection needs the AWS SDK described in the collector guide. Host process/socket/persistence inspection targets Linux; OS context, log parsing, name checks and virtual terminal personas are separate from native Windows endpoint scanning.
