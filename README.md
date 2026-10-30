@@ -6,6 +6,45 @@ The keyless browser portal uses managed Google/Microsoft/passkey sign-in, custom
 
 The browser application source is in [`portal/`](portal/), with [run instructions](portal/README.md). This public repository is an additional source distribution; the live deployment remains separately managed. Source availability and the launch link do not share anyone's reports or credentials.
 
+**Start at the [complete source, guide and public-link index](LINKS.md).** Source is organized on `main`; linked projects are credited below. A reference does not mean its code is installed, copied, security-reviewed, operational or endorsed.
+
+## Creators, upstream work and ethical use
+
+| Creator / community | Original work | How this repository uses or references it |
+|---|---|---|
+| [@HuginnsHammer](https://github.com/HuginnsHammer) | [CloudSentry static configuration auditor](https://github.com/HuginnsHammer/CloudSentry) | Separately namespaced, pinned MIT-licensed Terraform/Dockerfile/Compose auditor; original source, copyright and license preserved under `integrations/config-auditor/`. See its provenance notice and integration guide. |
+| [@jephersonRD](https://github.com/jephersonRD) | [PC-Free](https://github.com/jephersonRD/PC-Free) | Design reference for a separate offline backup candidate; no automatic installation or inheritance of its privileged/default networking choices. |
+| [@dockur](https://github.com/dockur) | [Windows runtime](https://github.com/dockur/windows) | Referenced dependency concept for the PC-Free-derived candidate; runtime/image contents are not vendored or authenticated merely by linking. |
+| [@TechxArtisanStudio](https://github.com/TechxArtisanStudio) | [Openterface KVM-GO hardware](https://github.com/TechxArtisanStudio/Openterface_KVM-GO_Hardware) | Administrator-only physical-console reference; no visitor HID/device adapter and no hardware test claim. |
+| [@9elements](https://github.com/9elements) | [VMBoot](https://github.com/9elements/VMBoot) | Separate firmware-research reference; not flashed, provisioned or enabled by customer content. |
+| [@qemu](https://github.com/qemu), QEMU contributors | [QEMU](https://github.com/qemu/qemu) | Distribution-installed trusted functional lab tools; source and firmware licenses remain upstream. TCG results do not establish hostile-guest isolation. |
+| Linux KVM community | [KVM](https://www.linux-kvm.org/) | Referenced hardware-virtualization backend; this sandbox does not expose `/dev/kvm`. |
+| [@stefanberger](https://github.com/stefanberger), swtpm contributors | [swtpm](https://github.com/stefanberger/swtpm) | Distribution-installed software TPM used only for finite trusted-fixture tests; no physical-TPM assurance. |
+| [@tianocore](https://github.com/tianocore), EDK II contributors | [EDK II / OVMF / AAVMF](https://github.com/tianocore/edk2) | Firmware-functional testing reference and distribution firmware; Secure Boot enforcement remains unproven unless the required controls are observed. |
+| [@openbmc](https://github.com/openbmc), OpenBMC contributors | [OpenBMC](https://github.com/openbmc/openbmc) | Optional hardware-management research reference only; no BMC deployment or testing included. |
+| Prompt Injection Database project | [Public site](https://www.promptinjectiondatabase.com/) | Referenced source/possible contribution destination; no access-gated corpus is copied, and no endorsement or submission is implied. |
+| GitHub community | [Virtual-machine topic](https://github.com/topics/virtual-machine) | Discovery index, not an implementation or security certification. |
+
+The original CloudSentry triage, bounded deception, evidence, customer-report and keyless-portal work remains distinguished from upstream modules. Git history and each imported component's own notice preserve attribution; no root license relabels third-party work. Creator profile links and handle text provide public credit and professional discovery, without implying endorsement. README references do not guarantee a notification. Direct issues, pull requests, messages and third-party submissions are separate actions, not automatically sent by the software.
+
+Use only on infrastructure and evidence you are authorized to assess. Never turn resource controls, echo behavior, uploaded content or a detector flag into authority to exhaust a remote endpoint, execute a visitor command, provision a VM or access another person's systems. Preserve original evidence and separate synthetic effects, descriptive patterns and unverified claims from established facts. No authorship, identity, psychology or legal certainty is inferred from a writing-pattern summary.
+
+## Combined static configuration auditing
+
+Your incident-response/deception/report toolkit is now combined with the independently namespaced [MIT configuration auditor by @HuginnsHammer](https://github.com/HuginnsHammer/CloudSentry), pinned at `0e4fd3b55fcb4073db6943e4a2ad802b5e0dba6c`. Its original scanner, tests, frontend, documentation and license are preserved; they do not replace the keyless portal or start an API automatically.
+
+```sh
+# Optional isolated dependency environment; core tools do not require it.
+python3.12 -m venv .config-auditor-venv
+.config-auditor-venv/bin/python -m pip install -e './integrations/config-auditor[dev]'
+
+# Explicitly authorize static inspection of one selected file, not execution.
+python3 scripts/scan-configurations.py --target /absolute/path/to/Dockerfile \
+  --format json --consent
+```
+
+Terraform, Dockerfile and Compose rules retain stable finding IDs, source/evidence locations, severity/confidence, remediation and JSON/SARIF/text output. The host bridge rejects directories and symlinks, limits selected files to 2 MiB, uses an authorized descriptor, bounds runtime/output and checks revocation before releasing results. Exit 0 means no qualifying finding, 1 means findings and 2 means incomplete, denied or failed—not clean. It never executes scanned input, starts a container, applies Terraform, contacts a provider or auto-remediates. Source evidence and paths can be sensitive: review the whole output before manual portal import as `local`. See [setup, upstream limits and source provenance](docs/config-auditor-integration.md).
+
 A local incident-response triage tool with a separate, in-memory deception terminal. It imports pasted or selected real logs, records limited OS details, inventories Linux listeners, flags possible shell-linked TCP connections and persistence indicators, and checks domain/package lookalikes against an operator-provided baseline.
 
 The decoy can display a neutral maintenance console and apparent root/administrator access. This is cosmetic: it never obtains privileges, executes submitted commands, opens an outbound connection, or exposes the actual host. The local terminal opens no sockets; the optional service only accepts bounded inbound sessions. Operator notices, audit events, and evidence exports retain explicit simulation provenance even when the terminal presentation is realistic.
@@ -42,6 +81,17 @@ Customers may save the resulting JSON privately and deliberately import it into 
 **Opt in manually:** choose your isolated environment, explicitly start the loopback service, preserve the audit privately, and generate your selected report. Non-loopback binding additionally requires `--allow-public` plus your own reviewed ingress/egress configuration. Login or a positive scan never enables exposure. The [customer opt-in instructions](docs/resource-economics.md#customer-opt-in-run-it-manually-on-your-infrastructure) cover private no-overwrite logging and separately approved manual containment. The customer—not the portal—makes those operational choices.
 
 See [resource budgets and operating-report details](docs/resource-economics.md). Adaptive firewall enforcement, automatic DNS sinkholing, monitored canary credentials and guaranteed attacker-cost estimates are **not** implemented. DNS proposals remain separate, ownership-confirmed and review-only.
+
+### Defensive compute boundary
+
+The optional [rationed echo policy](docs/resource-boundary.md) defines 0.25 CPU quota, 256 MiB memory, no swap, 32 tasks and explicit-device I/O limits. It is an availability/cost-control boundary on the **customer's own workload**, not a way to consume remote resources. No GPU workload or timeslice is granted. Quotas do not eliminate CPU/GPU side channels or replace a hypervisor, device policy, egress controls or an external stop authority.
+
+```sh
+# Policy review only: no cgroup changes, GPU access or listener launch.
+python3 scripts/rationed-echo.py --review --consent
+```
+
+Kernel readback, fresh scoped permission and a separately trusted GPU-deny-policy check are required before the low-level apply path can launch the fixed echo. The standalone CLI has no such device-policy integration and therefore fails closed on apply; it never silently drops a missing limit. Counter deltas describe throttling/pressure, not mining, cracking, inference, exfiltration or malicious intent. Missing/reset telemetry remains unknown. A customer baseline can support an investigation, not replace independent evidence or automatically expand a session's resources.
 
 ### Emergency-only manual profile
 
@@ -81,6 +131,20 @@ python3 scripts/security-behavior.py explain --audit preserved-service-audit.jso
 ```
 
 The first command compares expected/actual behavior across synthetic regressions and exports a contract another trusted script can review. The second creates private technical feedback and a plain-English customer report from **one shared immutable in-process audit snapshot**, with source/line/artifact hashes and explicit uncertainty. It explains recorded events, inferred patterns and why no automatic containment was authorized. It never treats logs as commands or approval, invents missing evidence, describes synthetic privileges as a real compromise or sends a report automatically. Existing output directories are never overwritten.
+
+### Customer evidence and descriptive writing-pattern report
+
+The [customer forensic-style report](docs/customer-forensic-report.md) combines explicitly selected audit/lab evidence with aggregate characteristics of selected UTF-8 text and an optional separate baseline. It records exact source hashes, UTC generation time, a unique packet ID and a separately preserved manifest pin. Writing metrics cover vocabulary distribution, punctuation, sentence/paragraph proxies and repetition; they are not authorship identification, psychological profiling or proof of access/intent. Imported resource and lab statuses remain unverified, and missing resource enforcement is unknown.
+
+```sh
+python3 scripts/customer-forensic-report.py --text selected-content.txt \
+  --audit selected-audit.jsonl --lab-report selected-local-result.json \
+  --output-dir new-private-customer-packet --consent
+```
+
+At least one selected input is required; existing output is never overwritten. PDFs require customer-reviewed text extraction first: this script does not claim OCR. It never executes supplied prose, trains production policy, starts a service or authorizes a VM.
+
+The separately opted-in [software-only functional lab](docs/software-vm-lab.md) uses distribution QEMU/firmware/swtpm and original trusted fixtures, not uploaded samples. Physical TPM hardware is not needed for software TPM checks. Offline qcow2 snapshots and virtual firmware tests are not equivalent to a complete OS boot, live checkpoint, attestation or hardware-isolation audit; missing firmware observations produce an explicit partial result, never deployment approval.
 
 ### Test adversarial boundaries and verify a packet
 

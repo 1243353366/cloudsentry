@@ -37,3 +37,9 @@ The separate local source package includes virtual PHP metadata, bounded text in
 
 - [x] Provide a separately testable local emergency-only silent sink with fixed small budgets and a 30-second whole-service lifetime. Accept only bind/port and explicit non-loopback opt-in, emit no application response and execute no input. It starts a new listener only; it does not take over connections, automatically activate after a finding, deploy from the website, interfere with OCR/security tools or replace trusted external containment of a compromised host.
 - [ ] Extract the implementation lessons and verified/unverified boundaries into a concise handoff; push reviewed source and publish the final customer-facing instructions.
+
+## Credited combined toolkit and final demonstration
+
+- [ ] Publish concise manual instructions for the separately permission-gated static configuration auditor, customer forensic-style text/audit report and resource-policy review. The portal must not execute any of them, start a service/VM, take provider credentials or treat imported output as authorization.
+- [ ] Credit HuginnsHammer's original MIT configuration-auditor project and link the root creator/source index; preserve licensed source independently in the public repository. Keep descriptive writing metrics distinct from identity, psychology or legal proof, and declared/unknown resource controls distinct from verified enforcement.
+- [ ] Finish core, independent upstream and portal checks; publish the accepted checkpoint and public main source, then demonstrate the actual live page without a fabricated customer login or unapproved private-data import.

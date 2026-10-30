@@ -1,0 +1,40 @@
+name: Config auditor tests
+
+on:
+  push:
+    paths:
+      - "integrations/config-auditor/**"
+      - "scripts/scan-configurations.py"
+      - "tests/test_config_auditor_bridge.py"
+      - ".github/workflows/config-auditor-tests.yml"
+  pull_request:
+    paths:
+      - "integrations/config-auditor/**"
+      - "scripts/scan-configurations.py"
+      - "tests/test_config_auditor_bridge.py"
+      - ".github/workflows/config-auditor-tests.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  upstream-scanner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install reviewed vendor test dependencies
+        working-directory: integrations/config-auditor
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+      - name: Test the vendored upstream scanner
+        working-directory: integrations/config-auditor
+        run: python -m pytest
+      - name: Test the host bridge contract without host dependencies
+        env:
+          PYTHONPATH: src
+        run: python -m unittest tests/test_config_auditor_bridge.py

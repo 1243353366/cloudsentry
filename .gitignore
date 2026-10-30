@@ -4,6 +4,7 @@ __pycache__/
 build/
 dist/
 .venv/
+.config-auditor-venv/
 .env
 .env.*
 *.pem
@@ -20,6 +21,11 @@ dist/
 !portal/drizzle/meta/_journal.json
 !portal/drizzle/meta/0000_snapshot.json
 !portal/drizzle/meta/0001_snapshot.json
+!integrations/config-auditor/PORTFOLIO.json
+!integrations/config-auditor/frontend/package.json
+!integrations/config-auditor/frontend/package-lock.json
+!integrations/config-auditor/frontend/tsconfig.json
+!integrations/config-auditor/.env.example
 *.log
 observed*.txt
 trusted*.txt

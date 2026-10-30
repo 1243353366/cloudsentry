@@ -91,3 +91,13 @@ No budget field measures a visitor’s CPU, memory, operating system, bandwidth,
 These application controls do not replace infrastructure controls. CPU and memory enforcement belong to an external container/runtime policy, such as reviewed Docker limits, and are not host-OS controls performed by this application. The service does not claim to enforce network egress, firewall policy, volumetric denial-of-service protection, or an infrastructure spending ceiling.
 
 Run public-facing decoys only in an authorized, isolated environment with independently reviewed ingress, egress, container, retention, and incident-response controls. Keep audit logs private and preserve the original file if it may be needed for later review. The operations summary is a factual aid for the explicitly supplied audit only; it is never proof of a remote actor or remote impact.
+
+## Optional customer-side compute boundary
+
+The [resource-boundary module](resource-boundary.md) is separate from these application budgets. Its fixed plan uses `cpu.max=25000 100000`, a 256 MiB memory ceiling, zero swap, 32 tasks and explicit-device I/O limits. Review is no-write/no-launch. The low-level apply path requires a fresh exact-scope grant, pre-delegated cgroup-v2 controllers, verified readback and a trusted external GPU-deny-policy integration. The standalone CLI cannot manufacture that device-policy evidence and fails closed on apply. No parent/global controller setting is changed and no arbitrary command or visitor content is run.
+
+GPU time slicing is not implemented or promised. Fewer CPU resources can reduce available work and limit exposure, but CPU allocation is not a port-equivalent isolation proof and does not eliminate shared-cache, timing, device or hypervisor vulnerabilities. Limits can preserve headroom and response time; they do not establish a guaranteed response window, service SLA or cloud-spending cap.
+
+CPU throttling, memory/PID pressure and selected-device I/O deltas are source-bounded observations. Missing/reset counters remain unknown. Compare a separately reviewed customer baseline and independent telemetry before drawing conclusions: ordinary workloads, quotas and noisy neighbors can also cause pressure. No threshold or claimed violation expands the session's authority or automatically changes production policy.
+
+Customer wording: **“The isolated service is intended to run with small, explicitly configured CPU, memory, process and device-I/O budgets. No GPU workload is granted. We report which controls were declared or verified, and which remain unknown. Pressure and limit events prompt review; they are not proof of an attack. Independent infrastructure controls protect production availability.”**
