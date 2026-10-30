@@ -155,7 +155,7 @@ def _run_scanner(path: Path, output_format: str, severity: str, descriptor: int,
     with tempfile.TemporaryFile() as output:
         with subprocess.Popen(command, cwd=ROOT / "integrations" / "config-auditor", env=environment,
                               stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.DEVNULL,
-                              pass_fds=(descriptor,)) as process:
+                              close_fds=True, pass_fds=(descriptor,)) as process:
             try:
                 deadline = time.monotonic() + _TIMEOUT_SECONDS
                 while process.poll() is None:

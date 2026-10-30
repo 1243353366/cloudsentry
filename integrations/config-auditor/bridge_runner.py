@@ -1,9 +1,10 @@
 """Private worker for scripts/scan-configurations.py.
 
 This module is not a public scanner CLI.  It receives one already-open regular
-file descriptor from the authorized parent, makes a private symlink with the
-original basename so the upstream scanner recognizes the file type, and renders
-one report to stdout.  It imports the vendored scanner only after process start.
+file descriptor from the authorized parent, copies a bounded snapshot to a
+private regular file with the original basename so the upstream scanner
+recognizes the file type, and renders one report to stdout.  It imports the
+vendored scanner only after process start.
 """
 from __future__ import annotations
 
@@ -15,6 +16,7 @@ import sys
 import tempfile
 
 MAX_FILE_BYTES = 2 * 1024 * 1024
+_COPY_CHUNK_BYTES = 64 * 1024
 FORMATS = frozenset({"text", "json", "sarif"})
 SEVERITIES = ("critical", "high", "medium", "low", "info")
 
@@ -50,6 +52,51 @@ def _readable_fd(fd: int) -> None:
         raise ValueError("worker input is not a regular file")
     if descriptor.st_size > MAX_FILE_BYTES:
         raise ValueError("worker input exceeds the reviewed size limit")
+
+
+def _stable_identity(descriptor: os.stat_result) -> tuple[int, int, int, int, int]:
+    """Return metadata that detects ordinary writes during the bounded copy."""
+    return (
+        descriptor.st_dev,
+        descriptor.st_ino,
+        descriptor.st_size,
+        descriptor.st_mtime_ns,
+        descriptor.st_ctime_ns,
+    )
+
+
+def _snapshot_fd(fd: int, staging_path: Path) -> None:
+    """Copy one stable, bounded descriptor snapshot to a private regular file.
+
+    ``pread`` leaves the parent descriptor offset untouched. A later pathname
+    swap cannot affect this copy, and the scanner cannot follow the caller's
+    descriptor through ``/proc``. The before/after metadata check rejects the
+    ordinary concurrent-write case rather than scanning a mixed view.
+    """
+    before = os.fstat(fd)
+    _readable_fd(fd)
+    expected_size = before.st_size
+    identity = _stable_identity(before)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    staging_fd = os.open(staging_path, flags, 0o600)
+    try:
+        offset = 0
+        while offset < expected_size:
+            chunk = os.pread(fd, min(_COPY_CHUNK_BYTES, expected_size - offset), offset)
+            if not chunk:
+                raise ValueError("worker input changed while snapshotting")
+            written = 0
+            while written < len(chunk):
+                count = os.write(staging_fd, chunk[written:])
+                if count <= 0:
+                    raise OSError("could not write worker snapshot")
+                written += count
+            offset += len(chunk)
+        after = os.fstat(fd)
+        if not stat.S_ISREG(after.st_mode) or _stable_identity(after) != identity:
+            raise ValueError("worker input changed while snapshotting")
+    finally:
+        os.close(staging_fd)
 
 
 def _safe_name(value: str) -> str:
@@ -115,10 +162,7 @@ def _run(args: argparse.Namespace) -> int:
 
     with tempfile.TemporaryDirectory(prefix="config-auditor-") as temporary:
         staging_path = Path(temporary) / name
-        # The symlink targets this process's inherited descriptor, rather than the
-        # selected path. The parent safely opened it after authorization, so a later
-        # pathname swap cannot redirect the upstream engine.
-        os.symlink(f"/proc/self/fd/{args.fd}", staging_path)
+        _snapshot_fd(args.fd, staging_path)
         result = scan_paths([staging_path])
         _replace_staging_paths(result, staging_path, args.display_path)
 

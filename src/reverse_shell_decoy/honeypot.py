@@ -561,19 +561,35 @@ class DecoyServer:
             command_times.append(now)
             command_count += 1
 
+            events_before = len(session.events)
             output = session.execute(command)
-            virtual_event = session.events[-1]
+            if len(session.events) > events_before:
+                virtual_event = session.events[-1]
+                virtual_details = {
+                    "blocked": virtual_event["blocked"],
+                    "reason": virtual_event["reason"],
+                    "output_sha256": virtual_event["output_sha256"],
+                }
+            else:
+                # The simulator retains at most MAX_COMMANDS event records.  Its
+                # terminal limit response deliberately does not evict a prior
+                # event merely to record another one.  Do not misattribute that
+                # prior output metadata if this handler is ever configured above
+                # the simulator cap.
+                virtual_details = {
+                    "blocked": True,
+                    "reason": "virtual_command_limit" if session.closed else "virtual_audit_unavailable",
+                    "output_sha256": hashlib.sha256(output.encode()).hexdigest(),
+                }
             if not self._audit_event(
                 "command",
                 session_id,
                 peer_ip,
                 command_sha256=hashlib.sha256(raw_bytes).hexdigest(),
                 verb=self._audit_verb(command),
-                blocked=virtual_event["blocked"],
-                reason=virtual_event["reason"],
                 input_byte_count=len(line),
-                output_sha256=virtual_event["output_sha256"],
                 **inspect_text(command),
+                **virtual_details,
             ):
                 return "audit_limit"
             if not await self._safe_write(writer, output):

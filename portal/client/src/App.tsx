@@ -276,6 +276,7 @@ function HomePage() {
           <p className="eyebrow">Customer-operated evidence review</p>
           <h1 id="landing-title">Bring your export.<br /><em>Keep your control.</em></h1>
           <p className="hero-lede">CloudSentry is a calm room for customer-selected JSON evidence. Use managed sign-in, keep provider authorization in each provider’s own tools, and explicitly import only the results you choose.</p>
+          <p><a className="documentation-link" href="https://github.com/1243353366/cloudsentry/blob/main/CHANGELOG.md" target="_blank" rel="noopener external">What changed: core 0.1.1 / portal 1.0.1, with the previous release archived<ArrowUpRight size={15} aria-hidden="true" /></a></p>
           <div className="hero-principles" aria-label="CloudSentry operating principles">
             <span><ShieldCheck size={16} aria-hidden="true" /> Managed customer session</span>
             <span><FolderOpen size={16} aria-hidden="true" /> Metadata-only profiles</span>

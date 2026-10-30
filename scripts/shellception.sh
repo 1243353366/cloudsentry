@@ -1,8 +1,9 @@
-#!/usr/bin/env bash
+#!/bin/sh
 # Defensive shellception: read-only snapshots + synthetic mutation + integrity guard.
 # No attacker host/port, counter-shell, cron/watchdog, daemonization, or host changes.
-set -euo pipefail
-BASE="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-PYTHON="$(command -v python3)"
-exec env -i PATH=/usr/bin:/bin PYTHONPATH="$BASE/src" PYTHONDONTWRITEBYTECODE=1 \
-  "$PYTHON" -m reverse_shell_decoy.shellception "$@"
+PATH=/usr/bin:/bin
+export PATH
+set -eu
+BASE=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+exec /usr/bin/env -i PATH=/usr/bin:/bin PYTHONPATH="$BASE/src" PYTHONDONTWRITEBYTECODE=1 \
+  /usr/bin/python3 -m reverse_shell_decoy.shellception "$@"

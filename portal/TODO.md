@@ -43,3 +43,9 @@ The separate local source package includes virtual PHP metadata, bounded text in
 - [ ] Publish concise manual instructions for the separately permission-gated static configuration auditor, customer forensic-style text/audit report and resource-policy review. The portal must not execute any of them, start a service/VM, take provider credentials or treat imported output as authorization.
 - [ ] Credit HuginnsHammer's original MIT configuration-auditor project and link the root creator/source index; preserve licensed source independently in the public repository. Keep descriptive writing metrics distinct from identity, psychology or legal proof, and declared/unknown resource controls distinct from verified enforcement.
 - [ ] Finish core, independent upstream and portal checks; publish the accepted checkpoint and public main source, then demonstrate the actual live page without a fabricated customer login or unapproved private-data import.
+
+## Review-8 patch release and walkthrough
+
+- [ ] Publish a visible link to the reviewed 0.1.1 core / 1.0.1 portal changelog, including the previous 0.1.0 source checkpoint, prior deployed portal checkpoint and tested scope. The old version remains in Git history; no reset or history rewriting.
+- [ ] Explain confirmed fixes separately from deliberate safety boundaries, unconfirmed review claims and remaining limits. No automatic retry/relisten, provider scan, local service or VM launch is added to the website.
+- [ ] Preserve exact-origin, authentication, CSRF and ownership boundaries, check the changed portal, save its checkpoint, publish it and verify the live release-note link.

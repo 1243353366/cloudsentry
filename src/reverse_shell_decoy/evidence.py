@@ -18,8 +18,9 @@ import stat
 from typing import Any
 import zipfile
 
+from . import __version__
 
-TOOL_VERSION = "0.1.0"
+TOOL_VERSION = __version__
 """Version recorded in newly exported evidence manifests."""
 
 SCHEMA_VERSION = "1.0"
@@ -265,6 +266,8 @@ def verify_bundle(path: str | Path) -> dict[str, Any]:
             try:
                 with zipfile.ZipFile(file_handle, mode="r") as archive:
                     _verify_archive(archive, result)
+            except (zipfile.LargeZipFile, MemoryError):
+                result["errors"].append("bundle exceeds safe ZIP resource limits")
             except (zipfile.BadZipFile, EOFError, RuntimeError, OSError):
                 result["errors"].append("bundle is not a readable ZIP archive")
     finally:
@@ -426,6 +429,9 @@ def _open_verified_input(path: Path):
 def _verify_archive(archive: zipfile.ZipFile, result: dict[str, Any]) -> None:
     try:
         infos = archive.infolist()
+    except (zipfile.LargeZipFile, MemoryError):
+        result["errors"].append("bundle directory exceeds safe ZIP resource limits")
+        return
     except (zipfile.BadZipFile, OSError, RuntimeError):
         result["errors"].append("bundle directory cannot be read")
         return

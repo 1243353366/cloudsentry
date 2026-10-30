@@ -12,6 +12,8 @@ import json
 import os
 import re
 import ssl
+import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -23,6 +25,7 @@ MAX_FIELD_BYTES = 256 * 1024
 MAX_EVENTS = 200
 MAX_PAGES = 2
 HTTP_TIMEOUT_SECONDS = 15
+_HTTP_READ_CHUNK_BYTES = 64 * 1024
 
 _CLOUDFLARE_HOST = "api.cloudflare.com"
 _RENDER_HOST = "api.render.com"
@@ -46,7 +49,6 @@ _RAILWAY_AUDIT_QUERY_SUFFIX = """) { edges { node { id eventType createdAt proje
 _SENSITIVE_KEY_PARTS = (
     "password",
     "secret",
-    "token",
     "apikey",
     "authorization",
     "credential",
@@ -55,6 +57,20 @@ _SENSITIVE_KEY_PARTS = (
     "cookie",
     "envvalue",
     "environmentvalue",
+)
+# These names describe counters or usage metrics, rather than credential values.  In
+# particular, provider audit records commonly use tokensUsed and
+# expirationTokenCount.  Keep the exception intentionally narrow: ambiguous token
+# fields remain omitted rather than being treated as safe by default.
+_NON_SECRET_TOKEN_METRIC_SUFFIXES = (
+    "tokencount",
+    "tokencounts",
+    "tokensused",
+    "tokenusage",
+    "tokenusages",
+    "tokenlimit",
+    "tokenlimits",
+    "tokenremaining",
 )
 # These provider event fields can include request bodies, configuration values, or
 # values returned by a control-plane action.  They are not needed by the analyzer.
@@ -82,6 +98,8 @@ _MISSING_CREDENTIALS_REASON = "missing_credentials"
 _OPTIONAL_DEPENDENCY_REASON = "optional_dependency_unavailable"
 _SCOPE_MISMATCH_REASON = "scope_mismatch"
 _UNSUPPORTED_PROVIDER_REASON = "unsupported_provider"
+_REDIRECT_REFUSED_REASON = "redirect_refused"
+_RATE_LIMITED_REASON = "rate_limited"
 _SAFE_FAILURE_REASONS = frozenset(
     {
         _UNKNOWN_REASON,
@@ -92,6 +110,8 @@ _SAFE_FAILURE_REASONS = frozenset(
         _OPTIONAL_DEPENDENCY_REASON,
         _SCOPE_MISMATCH_REASON,
         _UNSUPPORTED_PROVIDER_REASON,
+        _REDIRECT_REFUSED_REASON,
+        _RATE_LIMITED_REASON,
     }
 )
 _PROVIDER_CREDENTIAL_ENV = {
@@ -198,6 +218,31 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[override]
         return None
+
+
+_HTTP_OPENER: Any | None = None
+_HTTP_OPENER_FACTORY: Any | None = None
+_HTTP_OPENER_LOCK = threading.Lock()
+
+
+def _get_http_opener() -> Any:
+    """Return a process-local HTTPS opener without repeatedly creating TLS handlers.
+
+    The cache is lazy, has no network side effects, and is invalidated when tests
+    replace urllib's opener factory.  Each provider request still uses its own fixed
+    URL and headers; this only reuses local TLS configuration.
+    """
+
+    global _HTTP_OPENER, _HTTP_OPENER_FACTORY
+    factory = urllib.request.build_opener
+    with _HTTP_OPENER_LOCK:
+        if _HTTP_OPENER is None or _HTTP_OPENER_FACTORY is not factory:
+            _HTTP_OPENER = factory(
+                _NoRedirect(),
+                urllib.request.HTTPSHandler(context=ssl.create_default_context()),
+            )
+            _HTTP_OPENER_FACTORY = factory
+    return _HTTP_OPENER
 
 
 def collect_cloud(
@@ -312,13 +357,23 @@ def _collect_cloudflare(scope_id: str, since: str, until: str) -> dict[str, Any]
             f"/client/v4/accounts/{scope_id}/logs/audit",
             query,
         )
-        payload = _request_json(url, {"Authorization": f"Bearer {token}"}, method="GET")
+        try:
+            payload = _request_json(url, {"Authorization": f"Bearer {token}"}, method="GET")
+            if not isinstance(payload, Mapping) or payload.get("success") is False:
+                raise CloudCollectionError("Cloudflare did not return a successful audit-log response")
+            native_events = payload.get("result", [])
+            if not isinstance(native_events, list):
+                raise CloudCollectionError("Cloudflare returned an invalid audit-log response")
+        except CloudCollectionError as exc:
+            if not pages_fetched:
+                raise
+            truncated = True
+            warnings.append(
+                "Cloudflare audit-log page could not be collected; successful prior "
+                f"audit records were retained: {exc}"
+            )
+            break
         pages_fetched += 1
-        if not isinstance(payload, Mapping) or payload.get("success") is False:
-            raise CloudCollectionError("Cloudflare did not return a successful audit-log response")
-        native_events = payload.get("result", [])
-        if not isinstance(native_events, list):
-            raise CloudCollectionError("Cloudflare returned an invalid audit-log response")
         remaining = MAX_EVENTS - len(events)
         events.extend(native_events[:remaining])
         result_info = payload.get("result_info")
@@ -407,12 +462,35 @@ def _collect_aws(
             }
             if next_token:
                 params["NextToken"] = next_token
-            response = cloudtrail_client.lookup_events(**params)
-            _ensure_bounded_sdk_response(response)
+            try:
+                response = cloudtrail_client.lookup_events(**params)
+                _ensure_bounded_sdk_response(response)
+                native_events = response.get("Events", []) if isinstance(response, Mapping) else []
+                if not isinstance(native_events, list):
+                    raise CloudCollectionError("AWS CloudTrail returned an invalid event response")
+            except CloudCollectionError as exc:
+                if not pages_fetched:
+                    raise
+                truncated = True
+                warnings.append(
+                    "AWS CloudTrail page could not be collected; successful prior "
+                    f"audit records were retained: {exc}"
+                )
+                break
+            except Exception as exc:  # Do not expose an SDK exception or request data.
+                failure = CloudCollectionError(
+                    "AWS CloudTrail lookup failed",
+                    safe_reason=_aws_sdk_failure_reason(exc),
+                )
+                if not pages_fetched:
+                    raise failure from None
+                truncated = True
+                warnings.append(
+                    "AWS CloudTrail page could not be collected; successful prior "
+                    f"audit records were retained: {failure}"
+                )
+                break
             pages_fetched += 1
-            native_events = response.get("Events", []) if isinstance(response, Mapping) else []
-            if not isinstance(native_events, list):
-                raise CloudCollectionError("AWS CloudTrail returned an invalid event response")
             remaining = MAX_EVENTS - len(events)
             events.extend(_parse_cloudtrail_event(event) for event in native_events[:remaining])
             candidate = response.get("NextToken") if isinstance(response, Mapping) else None
@@ -501,10 +579,20 @@ def _collect_render(scope_id: str, since: str, until: str) -> dict[str, Any]:
             f"/v1/services/{urllib.parse.quote(service_id, safe='')}/events",
             {"startTime": since, "endTime": until, "limit": "100"},
         )
-        page = _request_json(event_url, headers, method="GET")
+        try:
+            page = _request_json(event_url, headers, method="GET")
+            if not isinstance(page, list):
+                raise CloudCollectionError("Render returned an invalid service-event response")
+        except CloudCollectionError as exc:
+            if not pages_fetched:
+                raise
+            truncated = True
+            warnings.append(
+                "Render service-event page could not be collected; successful prior "
+                f"service records were retained: {exc}"
+            )
+            continue
         pages_fetched += 1
-        if not isinstance(page, list):
-            raise CloudCollectionError("Render returned an invalid service-event response")
         remaining = MAX_EVENTS - len(events)
         # Preserve Render's cursor wrapper; it is useful native context for a later
         # analyzer, but the event object itself is redacted before return.
@@ -629,12 +717,16 @@ def _fixed_url(host: str, path: str, query: Mapping[str, str] | None = None) -> 
 
 
 def _http_failure_reason(status_code: Any) -> str:
-    """Classify only the two HTTP statuses with an intentionally fixed meaning."""
+    """Classify fixed HTTP failure states without retaining a provider response."""
 
+    if isinstance(status_code, int) and 300 <= status_code < 400:
+        return _REDIRECT_REFUSED_REASON
     if status_code == 401:
         return _AUTHENTICATION_FAILED_REASON
     if status_code == 403:
         return _PERMISSION_DENIED_REASON
+    if status_code == 429:
+        return _RATE_LIMITED_REASON
     return _UNKNOWN_REASON
 
 
@@ -659,6 +751,81 @@ def _aws_sdk_failure_reason(exc: BaseException) -> str:
     if code in {"ExpiredToken", "ExpiredTokenException"}:
         return _CREDENTIAL_EXPIRED_REASON
     return _UNKNOWN_REASON
+
+
+def _has_retry_after(headers: Any) -> bool:
+    """Check only for retry guidance presence; never retain or echo its value."""
+
+    try:
+        return getattr(headers, "get")("Retry-After") is not None
+    except Exception:
+        return False
+
+
+def _http_failure_message(status_code: Any, headers: Any) -> str:
+    """Return a fixed message that does not include a provider body or header value."""
+
+    reason = _http_failure_reason(status_code)
+    if reason == _REDIRECT_REFUSED_REASON:
+        return "cloud HTTP redirect was refused"
+    if reason == _RATE_LIMITED_REASON:
+        if _has_retry_after(headers):
+            return (
+                "cloud HTTP request was rate limited; Retry-After was received and "
+                "no automatic retry was attempted"
+            )
+        return "cloud HTTP request was rate limited; no automatic retry was attempted"
+    if isinstance(status_code, int):
+        return f"cloud HTTP request failed with status {status_code}"
+    return "cloud HTTP request failed"
+
+
+def _response_socket(response: Any) -> Any | None:
+    """Return urllib's underlying HTTPS socket when it is exposed by the response."""
+
+    fp = getattr(response, "fp", None)
+    raw = getattr(fp, "raw", None)
+    sock = getattr(raw, "_sock", None)
+    return sock if callable(getattr(sock, "settimeout", None)) else None
+
+
+def _read_response_bytes(response: Any) -> bytes:
+    """Read a bounded HTTP response within one overall deadline when a socket is exposed.
+
+    urllib's request timeout applies to individual socket operations.  For a normal
+    HTTPS response, reset the socket timeout to the *remaining* monotonic interval
+    before each bounded read, so a slow-drip peer cannot extend the 15-second limit.
+    The one-read fallback supports opaque test and platform response wrappers that do
+    not expose a socket; urllib's standard HTTPS response follows the deadline path.
+    """
+
+    sock = _response_socket(response)
+    if sock is None:
+        return response.read(MAX_RESPONSE_BYTES + 1)
+
+    deadline = time.monotonic() + HTTP_TIMEOUT_SECONDS
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        remaining_seconds = deadline - time.monotonic()
+        if remaining_seconds <= 0:
+            raise CloudCollectionError("cloud response exceeded the overall HTTP read deadline")
+        try:
+            sock.settimeout(remaining_seconds)
+            chunk = response.read(
+                min(_HTTP_READ_CHUNK_BYTES, MAX_RESPONSE_BYTES + 1 - total)
+            )
+        except (OSError, TimeoutError):
+            raise CloudCollectionError("cloud response exceeded the overall HTTP read deadline") from None
+        if not isinstance(chunk, (bytes, bytearray)):
+            raise CloudCollectionError("cloud response had an unsupported byte stream")
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > MAX_RESPONSE_BYTES:
+            raise CloudCollectionError("cloud response exceeded the 8 MiB safety limit")
+        chunks.append(bytes(chunk))
+    return b"".join(chunks)
 
 
 def _request_json(
@@ -688,22 +855,19 @@ def _request_json(
         raise CloudCollectionError("GET request body was rejected")
 
     request = urllib.request.Request(url, data=body, headers=dict(headers), method=method)
-    opener = urllib.request.build_opener(_NoRedirect(), urllib.request.HTTPSHandler(context=ssl.create_default_context()))
+    opener = _get_http_opener()
     try:
         with opener.open(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
-            raw = response.read(MAX_RESPONSE_BYTES + 1)
+            raw = _read_response_bytes(response)
     except urllib.error.HTTPError as exc:
         status_code = exc.code if isinstance(exc.code, int) else None
         reason = _http_failure_reason(status_code)
-        message = (
-            f"cloud HTTP request failed with status {status_code}"
-            if status_code is not None
-            else "cloud HTTP request failed"
-        )
         raise CloudCollectionError(
-            message,
+            _http_failure_message(status_code, exc.headers),
             safe_reason=reason,
         ) from None
+    except CloudCollectionError:
+        raise
     except (urllib.error.URLError, OSError, TimeoutError) as exc:
         raise CloudCollectionError("cloud HTTP request failed") from None
     if len(raw) > MAX_RESPONSE_BYTES:
@@ -782,7 +946,7 @@ def _result(
         _SUCCESS_REASON,
         "bounded_sample",
     )
-    credential_values = _active_provider_credential_values(provider)
+    credential_values = _known_collector_credential_values()
     safe_warnings = [
         _sanitize_return_text(warning, credential_values) for warning in warnings
     ]
@@ -805,17 +969,19 @@ def _result(
     }
 
 
-def _active_provider_credential_values(provider: str) -> frozenset[str]:
-    """Read only the selected provider's exact active credential values for redaction.
+def _known_collector_credential_values() -> frozenset[str]:
+    """Read exact values only from the collector's documented credential names.
 
-    Values are neither cached nor returned.  This is deliberately not credential
-    discovery: the collector has already read only these documented environment names
-    for the explicitly selected provider.
+    Event payloads can echo a credential belonging to another supported provider in
+    the same operator process.  Cross-provider output sanitization therefore checks
+    the fixed names declared by this module, never scans arbitrary environment names,
+    and neither caches nor returns the discovered values.
     """
 
     return frozenset(
         value
-        for name in _PROVIDER_CREDENTIAL_ENV.get(provider, ())
+        for names in _PROVIDER_CREDENTIAL_ENV.values()
+        for name in names
         if isinstance((value := os.environ.get(name)), str) and value
     )
 
@@ -894,6 +1060,10 @@ def _sanitize_return_text(value: Any, credential_values: frozenset[str]) -> str:
 
 def _is_sensitive_key(key: str) -> bool:
     normalized = re.sub(r"[^a-z0-9]", "", key.lower())
-    return normalized in _ALWAYS_DROPPED_KEYS or any(
+    if normalized in _ALWAYS_DROPPED_KEYS or any(
         sensitive in normalized for sensitive in _SENSITIVE_KEY_PARTS
-    )
+    ):
+        return True
+    if "token" not in normalized:
+        return False
+    return not normalized.endswith(_NON_SECRET_TOKEN_METRIC_SUFFIXES)

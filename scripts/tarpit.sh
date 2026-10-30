@@ -1,5 +1,8 @@
-#!/usr/bin/env bash
+#!/bin/sh
 # Bounded inbound sink. No outbound replay, raw secret capture, or automatic restart.
-set -euo pipefail
-BASE="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-exec bash "$BASE/scripts/start-honeypot.sh" "$@" --response-mode sink
+PATH=/usr/bin:/bin
+export PATH
+set -eu
+BASE=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+exec /usr/bin/env -i PATH=/usr/bin:/bin PYTHONPATH="$BASE/src" PYTHONDONTWRITEBYTECODE=1 \
+  /usr/bin/python3 -m reverse_shell_decoy.honeypot "$@" --response-mode sink
