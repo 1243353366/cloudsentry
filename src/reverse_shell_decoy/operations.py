@@ -343,6 +343,13 @@ def build_operations_summary(audit_path: str) -> dict:
     cause any supplied raw text to enter the result.
     """
     content = read_regular(audit_path, MAX_AUDIT_BYTES)
+    return build_operations_summary_bytes(content)
+
+
+def build_operations_summary_bytes(content: bytes) -> dict:
+    """Summarize one caller-selected immutable snapshot without file/network access."""
+    if not isinstance(content, bytes):
+        raise ValueError("audit snapshot must be bytes")
     # ``read_regular`` enforces this too; retain an explicit invariant should the
     # helper ever be replaced.
     if len(content) > MAX_AUDIT_BYTES:

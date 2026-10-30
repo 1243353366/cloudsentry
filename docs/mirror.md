@@ -14,6 +14,8 @@ Within the quota, the received byte chunk is returned unchanged, including newli
 
 Raw bytes exist transiently in a bounded memory buffer. Operator audit contains session metadata, byte counts and chunk digests, not raw transcripts, credentials, SSH keys or command arguments. There is no raw capture to `/tmp` or another directory. To show a synthetic computer rather than plain data echo, use the default console mode of `scripts/start-honeypot.sh`: it provides allowlisted virtual commands, files, root/admin presentation and processes, all in memory.
 
+These retained values support a limited **content/activity fingerprint**, not identification of a visitor, a psychological profile or proof that a reverse shell succeeded. Echo and payload hashes do not identify a remote operating system. The visitor OS is unknown; local scanner OS fields describe the scanner machine and the virtual console persona is synthetic. Independent authorization and source evidence are needed before making stronger claims.
+
 ## Why the original unlimited design is not used
 
 Every connection is a fresh, bounded session—not an unbounded resource reservation. MIRROR reads at most 4,096 bytes per chunk, echoes at most 64 KiB per session, applies a chunk quota through `--max-commands`, and closes for rate, idle, session, whole-service, connection or audit limits. It does not automatically restart.

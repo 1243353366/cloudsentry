@@ -70,6 +70,43 @@ Every subsystem must be independently testable. Every inference must preserve it
 
 The [implementation lessons and final handoff](docs/lessons-learned.md) summarize what was learned, what the release checks establish, what remains unproven and which operational choices stay with the customer.
 
+## Optional behavior training and customer explanation
+
+The [Security Behavior Trainer + Customer Incident Explainer](docs/security-behavior.md) is **user-triggered and off by default**. Every run asks fresh permission before processing, or requires the operator's explicit `--consent` for that invocation. Training uses trusted synthetic fixtures and a versioned review-only policy contract—not model-weight training, automatic adoption or production rule rewriting.
+
+```sh
+python3 scripts/security-behavior.py train --consent --output behavior-training-review
+python3 scripts/security-behavior.py explain --audit preserved-service-audit.jsonl \
+  --consent --output customer-review-packet
+```
+
+The first command compares expected/actual behavior across synthetic regressions and exports a contract another trusted script can review. The second creates private technical feedback and a plain-English customer report from **one shared immutable in-process audit snapshot**, with source/line/artifact hashes and explicit uncertainty. It explains recorded events, inferred patterns and why no automatic containment was authorized. It never treats logs as commands or approval, invents missing evidence, describes synthetic privileges as a real compromise or sends a report automatically. Existing output directories are never overwritten.
+
+The separate optional `scripts/analyze-safely.py` provides static inspection and an explicitly synthetic virtual computer. It does not execute real samples. A real-VM requirement fails closed rather than silently running malware on the customer's device or treating a container/synthetic console as a VM. See the [virtual-analysis boundaries](docs/virtual-analysis.md); real disposable-VM provisioning, guest telemetry and VM-escape validation are not implemented or claimed.
+
+The [optional corpus runner](docs/prompt-injection-corpus.md) can test a customer-authorized local JSONL export or the repository's **original synthetic examples** against an ephemeral, finite loopback-only mirror. It requires fresh consent, retains hashes rather than raw prompts and offers no external target selection. The linked third-party database remains access-gated; this project did not scrape it, redistribute its full dataset, install code on its website or submit a contribution. Exact echo is not proof of LLM injection detection or jailbreak resistance.
+
+**Observation and fingerprinting, not attribution:** the bounded inbound service records limited connection metadata, input/chunk hashes, available timestamps and fixed activity indicators. These are content/activity fingerprints, not a person's identity or a proven attack. MIRROR returns bytes on the visitor-initiated socket; it does not establish a real shell or call a controller. It does **not detect the visitor's OS**. The scanner's OS information belongs to the computer running the scanner; the virtual console's OS is synthetic. A visitor OS remains unknown unless independently supported evidence is supplied and clearly labelled. Observation is not blanket legal immunity: customers still control authorized deployment, collection scope, retention and disclosure.
+
+### Create an analysis VM manually — optional
+
+Use a **separate, patched analysis host**, not the customer's everyday workstation, production server or CloudSentry portal. On an Ubuntu host with hardware virtualization, explicitly approve and run:
+
+```sh
+sudo apt update
+sudo apt install qemu-kvm libvirt-daemon-system virt-manager virt-viewer cpu-checker
+kvm-ok
+```
+
+1. Open `virt-manager` on that analysis host; create `cloudsentry-analysis` from a verified official Linux ISO. Choose **Customize configuration before install**, with a new qcow2 disk, for example 2 vCPUs, 2 GiB guest RAM and a 20 GiB virtual disk. These are example allocations, not a complete cost/resource cap.
+2. **Remove every guest NIC** before boot; no NAT, bridge or host-only connection. Add no shared host folders, host disks, passthrough devices or sockets. Disable clipboard, file transfer, USB redirection and guest-agent/SPICE channels; keep the management console restricted to the trusted administrator.
+3. Use unrelated lab-only credentials and an offline installation. Deliver reviewed tools/benign fixtures through read-only media—not shared directories. Keep customer keys, browser sessions and hypervisor-control privileges outside the guest.
+4. Review the effective XML and confirm `virsh --connect qemu:///system domiflist cloudsentry-analysis` shows no NIC. Shut down the clean guest, then create a supported baseline with `virsh --connect qemu:///system snapshot-create-as cloudsentry-analysis clean-baseline`. Preserve evidence separately before any future rollback.
+5. Boot the reviewed VM manually and run the existing static/synthetic options **inside it**, with fresh permission. No login, scan or detected pattern starts it automatically. Real interpreter execution of submitted samples remains disabled.
+6. After preserving evidence, shut down and deliberately revert to the powered-off baseline, or retire the guest through your reviewed process. If isolation is suspect, use a trusted external control plane to stop/escalate; do not treat a guest snapshot as proof that the host is clean.
+
+See the [full VM creation, verification and rollback instructions](docs/vm-setup.md). **Creating this guest does not enable `--require-vm`**: the verified remote-VM adapter, independent deadline/controller, dynamic malware telemetry and VM-escape validation are not implemented. A container or synthetic computer is not a VM, and no VM guarantees absolute device protection. These instructions were documentation-checked, not executed on customer hardware.
+
 ## Consent-gated review and text indicators
 
 After an explicitly requested scan, the CLI offers a local review by default in an interactive terminal. It asks fresh permission each time and generates nothing when permission is declined, stdin is non-interactive, or input ends. The prompt and optional review use stderr so the original scan JSON remains clean on stdout. No scan is triggered automatically. See the [post-scan review guide](docs/post-scan-review.md).

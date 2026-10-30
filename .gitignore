@@ -12,6 +12,7 @@ dist/
 *.zip
 *.json
 !examples/*-demo.json
+!examples/prompt-injection-corpus.jsonl
 !portal/package.json
 !portal/tsconfig.json
 !portal/components.json
