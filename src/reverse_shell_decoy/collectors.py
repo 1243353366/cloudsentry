@@ -87,9 +87,11 @@ _ALWAYS_DROPPED_KEYS = {
 # provider-side permission, or token validity after the request completes.
 _INTEGRATION_SOURCE = "local_explicit_collection"
 _SUCCESS_STATE = "customer_authorized_integration"
+_PARTIAL_STATE = "customer_authorized_integration_partial"
 _UNAVAILABLE_STATE = "integration_unavailable"
 _EXPIRED_OR_REVOKED_STATE = "credential_expired_or_revoked"
 _SUCCESS_REASON = "bounded_read_only_request_completed"
+_PARTIAL_REASON = "bounded_read_only_request_truncated"
 _UNKNOWN_REASON = "unknown_failure"
 _AUTHENTICATION_FAILED_REASON = "authentication_failed"
 _PERMISSION_DENIED_REASON = "permission_denied"
@@ -358,7 +360,7 @@ def _collect_cloudflare(scope_id: str, since: str, until: str) -> dict[str, Any]
             query,
         )
         try:
-            payload = _request_json(url, {"Authorization": f"Bearer {token}"}, method="GET")
+            payload = _request_json(url, {"Authorization": f"Bearer {token}"}, method="GET", warnings=warnings)
             if not isinstance(payload, Mapping) or payload.get("success") is False:
                 raise CloudCollectionError("Cloudflare did not return a successful audit-log response")
             native_events = payload.get("result", [])
@@ -553,7 +555,7 @@ def _collect_render(scope_id: str, since: str, until: str) -> dict[str, Any]:
         "/v1/services",
         {"ownerId": scope_id, "limit": "100", "includePreviews": "false"},
     )
-    service_page = _request_json(services_url, headers, method="GET")
+    service_page = _request_json(services_url, headers, method="GET", warnings=warnings)
     if not isinstance(service_page, list):
         raise CloudCollectionError("Render returned an invalid service-list response")
 
@@ -580,7 +582,7 @@ def _collect_render(scope_id: str, since: str, until: str) -> dict[str, Any]:
             {"startTime": since, "endTime": until, "limit": "100"},
         )
         try:
-            page = _request_json(event_url, headers, method="GET")
+            page = _request_json(event_url, headers, method="GET", warnings=warnings)
             if not isinstance(page, list):
                 raise CloudCollectionError("Render returned an invalid service-event response")
         except CloudCollectionError as exc:
@@ -789,21 +791,28 @@ def _response_socket(response: Any) -> Any | None:
     return sock if callable(getattr(sock, "settimeout", None)) else None
 
 
-def _read_response_bytes(response: Any) -> bytes:
+def _read_response_bytes(
+    response: Any,
+    deadline: float | None = None,
+    warnings: list[str] | None = None,
+) -> bytes:
     """Read a bounded HTTP response within one overall deadline when a socket is exposed.
 
     urllib's request timeout applies to individual socket operations.  For a normal
     HTTPS response, reset the socket timeout to the *remaining* monotonic interval
     before each bounded read, so a slow-drip peer cannot extend the 15-second limit.
-    The one-read fallback supports opaque test and platform response wrappers that do
-    not expose a socket; urllib's standard HTTPS response follows the deadline path.
+    When a socket is not exposed, record an explicit deadline_unenforced warning so
+    the caller knows the socket-level deadline could not be enforced.
     """
+
+    if deadline is None:
+        deadline = time.monotonic() + HTTP_TIMEOUT_SECONDS
 
     sock = _response_socket(response)
     if sock is None:
+        if warnings is not None:
+            warnings.append("deadline_unenforced: underlying response socket not exposed")
         return response.read(MAX_RESPONSE_BYTES + 1)
-
-    deadline = time.monotonic() + HTTP_TIMEOUT_SECONDS
     chunks: list[bytes] = []
     total = 0
     while True:
@@ -834,6 +843,7 @@ def _request_json(
     *,
     method: str,
     body: bytes | None = None,
+    warnings: list[str] | None = None,
 ) -> Any:
     """Issue a fixed-host GET, or Railway's documented read-only GraphQL POST.
 
@@ -856,9 +866,16 @@ def _request_json(
 
     request = urllib.request.Request(url, data=body, headers=dict(headers), method=method)
     opener = _get_http_opener()
+    start_time = time.monotonic()
+    total_deadline = start_time + HTTP_TIMEOUT_SECONDS
     try:
-        with opener.open(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
-            raw = _read_response_bytes(response)
+        # Enforce total deadline over connect/header/read phases
+        elapsed = time.monotonic() - start_time
+        remaining_timeout = max(0.001, HTTP_TIMEOUT_SECONDS - elapsed) if elapsed > 0.005 else HTTP_TIMEOUT_SECONDS
+        with opener.open(request, timeout=remaining_timeout) as response:
+            if time.monotonic() > total_deadline:
+                raise CloudCollectionError("cloud response exceeded the overall HTTP read deadline")
+            raw = _read_response_bytes(response, deadline=total_deadline, warnings=warnings)
     except urllib.error.HTTPError as exc:
         status_code = exc.code if isinstance(exc.code, int) else None
         reason = _http_failure_reason(status_code)
@@ -941,9 +958,11 @@ def _result(
     }
     if extra_coverage:
         coverage.update(extra_coverage)
+    default_state = _PARTIAL_STATE if truncated else _SUCCESS_STATE
+    default_reason = _PARTIAL_REASON if truncated else _SUCCESS_REASON
     status = integration_status or _integration_status(
-        _SUCCESS_STATE,
-        _SUCCESS_REASON,
+        default_state,
+        default_reason,
         "bounded_sample",
     )
     credential_values = _known_collector_credential_values()
@@ -1000,7 +1019,7 @@ def _sanitize_event(
         cleaned: dict[str, Any] = {}
         for key, child in value.items():
             raw_key_text = str(key)
-            if _is_sensitive_key(raw_key_text):
+            if _is_sensitive_field(raw_key_text, child):
                 continue
             key_text = _sanitize_credential_values(raw_key_text, credential_values)
             cleaned[key_text] = _sanitize_event(
@@ -1058,7 +1077,7 @@ def _sanitize_return_text(value: Any, credential_values: frozenset[str]) -> str:
     return _sanitize_credential_values(value, credential_values)
 
 
-def _is_sensitive_key(key: str) -> bool:
+def _is_sensitive_field(key: str, val: Any = None) -> bool:
     normalized = re.sub(r"[^a-z0-9]", "", key.lower())
     if normalized in _ALWAYS_DROPPED_KEYS or any(
         sensitive in normalized for sensitive in _SENSITIVE_KEY_PARTS
@@ -1066,4 +1085,13 @@ def _is_sensitive_key(key: str) -> bool:
         return True
     if "token" not in normalized:
         return False
-    return not normalized.endswith(_NON_SECRET_TOKEN_METRIC_SUFFIXES)
+    # If key contains 'token', it is only preserved if it matches non-secret metric suffixes
+    # AND the value is strictly numeric (int or float, not bool)
+    if not normalized.endswith(_NON_SECRET_TOKEN_METRIC_SUFFIXES):
+        return True
+    if val is not None and (isinstance(val, bool) or not isinstance(val, (int, float))):
+        return True
+    return False
+
+def _is_sensitive_key(key: str) -> bool:
+    return _is_sensitive_field(key)

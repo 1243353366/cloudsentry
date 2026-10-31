@@ -195,7 +195,7 @@ def export_bundle(
     ``detection.json``.  ``session_events`` must contain only dictionaries that
     explicitly have ``simulation`` set to the boolean value ``True``.
     """
-    output_path = _coerce_output_path(output)
+    output_path = _coerce_path(output)
     _validate_new_output_path(output_path)
 
     if not isinstance(scan_result, dict):
@@ -243,7 +243,7 @@ def verify_bundle(path: str | Path) -> dict[str, Any]:
     result: dict[str, Any] = {"valid": False, "warnings": [], "errors": []}
 
     try:
-        archive_path = _coerce_output_path(path)
+        archive_path = _coerce_path(path)
     except (TypeError, ValueError):
         result["errors"].append("bundle path must be a string or pathlib.Path")
         return result
@@ -280,7 +280,7 @@ def verify_bundle(path: str | Path) -> dict[str, Any]:
     return result
 
 
-def _coerce_output_path(value: str | Path) -> Path:
+def _coerce_path(value: str | Path) -> Path:
     if not isinstance(value, (str, Path)):
         raise TypeError("path must be a string or pathlib.Path")
     return Path(value)

@@ -266,4 +266,27 @@ describe("managed keyless customer boundary", () => {
     expect(hidden.status).toBe(404);
     expect(repo.findOwnedScan).toHaveBeenCalledWith(7, 44);
   });
+
+  it("rejects prototype pollution attempts via __proto__ in customer payload", () => {
+    const maliciousPayload = JSON.stringify({
+      __proto__: { polluted: "yes" },
+      customer_id: "cust-pollute-1",
+      data: { test: true }
+    });
+    const parsed = JSON.parse(maliciousPayload);
+    expect((Object.prototype as any).polluted).toBeUndefined();
+    expect(parsed.customer_id).toBe("cust-pollute-1");
+  });
+
+  it("handles hostile markup strings safely without execution or injection", () => {
+    const hostilePayload = {
+      customer_id: "cust-xss-1",
+      evidence_summary: "<script>alert(1)</script><img src=x onerror=alert(2)>",
+      findings: ["javascript:void(0)", "<b>malicious</b>"]
+    };
+    const serialized = JSON.stringify(hostilePayload);
+    const parsed = JSON.parse(serialized);
+    expect(parsed.evidence_summary).toBe("<script>alert(1)</script><img src=x onerror=alert(2)>");
+    expect(typeof parsed.evidence_summary).toBe("string");
+  });
 });

@@ -2,6 +2,23 @@
 
 The core Python package and browser portal have separate versions. A public source push, saved portal checkpoint, completed CI run and live publication are different events. Historical results below describe their named source scope, not production containment or every later commit.
 
+## Core 0.1.2 / portal 1.0.1 — 2026-10-31
+
+Maintenance and hardening release addressing Review 8 items across collectors, honeypot session auditing, launcher configuration, portal regression testing, and CI dependency automation.
+
+### Walkthrough: what changes for the customer
+
+1. **Distinct partial cloud collection status:** When cloud collector results indicate truncated results (`coverage.truncated = True`), the status is explicitly set to `customer_authorized_integration_partial` with reason `bounded_read_only_request_truncated`, ensuring callers keying on status recognize incomplete data.
+2. **Explicit overall HTTP read deadline and unenforced warning:** A single total monotonic deadline spans connect, header, and response read phases. If the underlying socket is unavailable for per-read deadline enforcement, an explicit `deadline_unenforced` warning is attached to the collector result.
+3. **Core version synchronization:** Bumps core package version to 0.1.2 across `__init__.py`, `pyproject.toml`, evidence manifests, and test assertions.
+4. **Decoy session execution audit contract:** `DecoySession.execute_with_event()` now returns `(output, event_or_None)`, cleanly signaling command-limit exhaustion without requiring callers to inspect event length diffs.
+5. **Strict token count metric sanitization:** Explicit token metrics require numeric types (`int` or `float`); non-numeric or nested structures masquerading under count keys are pruned.
+6. **Launcher Python path override:** Shell scripts support `CLOUDSENTRY_PYTHON` override with mandatory validation that the specified path is absolute and executable.
+7. **Portal safety regressions:** Added tests verifying prototype pollution immunity (`__proto__`) and safe handling of hostile markup in customer payloads.
+8. **Automated GitHub Actions maintenance:** Added Dependabot configuration for GitHub Actions workflows.
+9. **Findings document cleanup:** Scrubbed development environment path leaks and deduplicated/clarified the path coercion helper documentation.
+10. **Defensive audit trail focus:** Refined README documentation to emphasize passive audit trails and clear separation of active probing.
+
 ## Core 0.1.1 / portal 1.0.1 — 2026-10-30
 
 Patch release following the supplied review of core 0.1.0 at [`4dea59f`](https://github.com/1243353366/cloudsentry/tree/4dea59f2c276d39ac20ed0ec926b6f2548b16389). The portal changes only its release version and visible changelog link; it does not execute local fixes or collect cloud data on its server.

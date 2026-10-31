@@ -92,16 +92,16 @@ class DecoySession:
         "ps", "get-process", "ss", "netstat", "status", "php", "which",
     })
 
-    def execute(self, raw: str) -> str:
+    def execute_with_event(self, raw: str) -> tuple[str, dict[str, Any] | None]:
         if self.closed:
-            return "[SIMULATED] session closed\n"
+            return "[SIMULATED] session closed\n", None
         if len(self.events) >= MAX_COMMANDS:
             self.closed = True
-            return "[SIMULATED] maximum command count reached; session closed\n"
+            return "[SIMULATED] maximum command count reached; session closed\n", None
         if len(raw) > MAX_INPUT:
             # Never hash/store an unbounded caller-provided value in the audit.
             self._event(raw[:MAX_INPUT], "unsupported", True, "input_limit", "input too long")
-            return "[SIMULATED] input too long; blocked\n"
+            return "[SIMULATED] input too long; blocked\n", self.events[-1]
         stripped = raw.strip()
         verb = "unsupported"
         blocked, reason = False, "simulated"
@@ -125,6 +125,10 @@ class DecoySession:
         if self.presentation == "realistic":
             output = self._present(output)
         self._event(raw, verb, blocked, reason, output)
+        return output, self.events[-1]
+
+    def execute(self, raw: str) -> str:
+        output, _ = self.execute_with_event(raw)
         return output
 
     @staticmethod

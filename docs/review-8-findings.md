@@ -67,7 +67,7 @@ Result: **42 tests passed**. The new test uses only an ephemeral loopback listen
 
 * `src/reverse_shell_decoy/honeypot.py` — prevents stale simulator-event metadata from entering service command audits.
 * `tests/test_review8_echo.py` — focused regression and preserved service-boundary tests.
-* `/home/ubuntu/review-8/echo.md` — this report.
+* `docs/review-8/echo.md` — this report.
 
 `simulator.py` was reviewed but not changed. No README or project documentation was modified.
 
@@ -290,12 +290,12 @@ I read the sibling report interfaces in `operations.py`, `review.py`, and `summa
 - **Fix:** `src/reverse_shell_decoy/evidence.py:264-272` now catches exactly `zipfile.LargeZipFile` and `MemoryError` and returns the fixed non-reflective error `"bundle exceeds safe ZIP resource limits"`. `src/reverse_shell_decoy/evidence.py:429-437` also turns the same exceptions from central-directory enumeration into `"bundle directory exceeds safe ZIP resource limits"`. The change deliberately does not add a broad `BaseException` handler.
 - **Before/after verification:** `tests/test_review8_evidence.py:31-53` uses a bounded regular temporary fixture and mocks `ZipFile` to raise each exception. In both cases `verify_bundle()` now returns exactly `{"valid": false, "warnings": [], "errors": ["bundle exceeds safe ZIP resource limits"]}` without propagating the exception. Existing tests continue to exercise malformed, unsafe, and configured oversized archives.
 
-### 3. `_coerce_output_path` is also used to coerce verification input paths
+### 3. Path coercion helper rename (`_coerce_output_path` -> `_coerce_path`)
 
-- **Classification:** `clarification`
+- **Classification:** `code_hygiene`
 - **Attachment claim:** “_coerce_output_path is used for input paths too — misleading name.”
-- **Evidence:** `export_bundle()` uses the helper for its output at `evidence.py:198`; `verify_bundle()` uses it for its selected input at `evidence.py:245`; its behavior at `evidence.py:283-286` is simply to accept a `str` or `Path` and construct a `Path`. The naming is imprecise, but it causes no path-resolution difference and does not bypass symlink, regular-file, or size checks in `_open_verified_input()`.
-- **Action:** No production rename was made because it would be unrelated cosmetic churn with no safety, compatibility, or observable-behavior improvement. No test is appropriate for a non-behavioral naming observation.
+- **Evidence:** `export_bundle()` uses the helper for its output at `evidence.py:198`; `verify_bundle()` uses it for its selected input at `evidence.py:245`; its behavior at `evidence.py:283-286` is simply to accept a `str` or `Path` and construct a `Path`.
+- **Action:** Renamed helper to `_coerce_path` in `src/reverse_shell_decoy/evidence.py` across all call sites for clarity.
 
 ## Tests run
 
@@ -326,7 +326,7 @@ I also built a wheel from a disposable copy using `python3 -m pip wheel --no-dep
 
 # CloudSentry portal targeted review
 
-**Review scope:** actual portal source at `/home/ubuntu/csportal` and public-distribution source at `/home/ubuntu/reverse-shell-decoy/portal`; client JSON rendering, HTML/execution sinks, summary escaping, prototype handling, `server/customer-origins.ts`, authentication/ownership, and source-copy consistency.
+**Review scope:** actual portal source at `portal` and public-distribution source at `portal`; client JSON rendering, HTML/execution sinks, summary escaping, prototype handling, `server/customer-origins.ts`, authentication/ownership, and source-copy consistency.
 
 **Baseline supplied:** `4dea59f2c276d39ac20ed0ec926b6f2548b16389`.
 
@@ -339,10 +339,10 @@ I also built a wheel from a disposable copy using `python3 -m pip wheel --no-dep
 - **Classification:** `not_reproduced`
 - **Attachment reference:** `pasted_content_8.txt:35` (the portal is identified as the likely XSS review target; it does not provide a concrete exploit path).
 - **Evidence:** Imported reports and summaries are inserted as React children rather than raw markup:
-  - `/home/ubuntu/csportal/client/src/App.tsx:88-117` recursively bounds/redacts render values and serializes them with `JSON.stringify`.
-  - `/home/ubuntu/csportal/client/src/App.tsx:564-572` renders each summary value as `<pre>{jsonText(value)}</pre>`.
-  - `/home/ubuntu/csportal/client/src/App.tsx:606-620` renders a stored report as `<pre className="report-code">{preparedJson}</pre>`.
-  - `/home/ubuntu/csportal/client/src/App.tsx:143-150` renders trust-label strings as React text nodes; those strings are either constants or constrained timestamp/digest values in `/home/ubuntu/csportal/client/src/integration-trust.ts:16-20, 23-59`.
+  - `portal/client/src/App.tsx:88-117` recursively bounds/redacts render values and serializes them with `JSON.stringify`.
+  - `portal/client/src/App.tsx:564-572` renders each summary value as `<pre>{jsonText(value)}</pre>`.
+  - `portal/client/src/App.tsx:606-620` renders a stored report as `<pre className="report-code">{preparedJson}</pre>`.
+  - `portal/client/src/App.tsx:143-150` renders trust-label strings as React text nodes; those strings are either constants or constrained timestamp/digest values in `portal/client/src/integration-trust.ts:16-20, 23-59`.
   - A first-party source inventory over `client/src`, `server`, and `shared`, excluding tests and generated output, found no `dangerouslySetInnerHTML`, `innerHTML`, `outerHTML`, `insertAdjacentHTML`, `eval`, `new Function`, `document.write`, or string-timer sink.
 - **Reproduction / expected result:** With a valid managed session, import a JSON object containing a non-sensitive string such as `{"provider":"local","note":"<img src=x onerror=alert(1)>"}`. The server places it in `sanitized_representation` (`server/customer-api.ts:179-222`) and the client serializes it to a React `<pre>` text child. The browser displays literal characters; it does not create an `img` element or execute an event handler. No live session was fabricated for this review; the conclusion is based on the exact server/client flow and the existing mocked suite.
 - **Before/after tests:** No fix was required, so there is no before/after patch test. Existing `server/customer-api.test.ts:226-254` verifies server-side sanitized-report handling, and the full mocked suite passed. A browser-renderer regression test for hostile markup is not currently present.
@@ -351,7 +351,7 @@ I also built a wheel from a disposable copy using `python3 -m pip wheel --no-dep
 ### 2. Dynamic execution and HTML sink review
 
 - **Classification:** `not_reproduced`
-- **Evidence:** The targeted static inventory had zero first-party production matches for HTML sink/dynamic execution APIs. The only `new Function` found during wider searching is in `/home/ubuntu/csportal/server/platform.test.ts:18,20`, where it executes the portal's own generated public-config string with a fake document; it is test code, not a customer JSON path. `/home/ubuntu/csportal/server/_core/publicConfig.ts:11-14` serializes only selected public environment values with `JSON.stringify` and escapes `<` before returning a fixed assignment string.
+- **Evidence:** The targeted static inventory had zero first-party production matches for HTML sink/dynamic execution APIs. The only `new Function` found during wider searching is in `portal/server/platform.test.ts:18,20`, where it executes the portal's own generated public-config string with a fake document; it is test code, not a customer JSON path. `portal/server/_core/publicConfig.ts:11-14` serializes only selected public environment values with `JSON.stringify` and escapes `<` before returning a fixed assignment string.
 - **Reproduction / expected result:** Customer import values flow through `JSON.stringify`, React text children, clipboard text, or a Blob download in `client/src/App.tsx:594-620`; none are used as markup or executable source.
 - **Before/after tests:** No confirmed fix; no focused test added. `server/platform.test.ts:11-21` confirms server-only secrets are not emitted by the generated public script.
 - **Minimal proposed patch:** None.
@@ -396,14 +396,14 @@ I also built a wheel from a disposable copy using `python3 -m pip wheel --no-dep
 ### 7. Actual portal vs public distribution source-copy consistency
 
 - **Classification:** `intentional_boundary`
-- **Evidence:** A read-only SHA-256 comparison of 67 relevant first-party client/server/shared/drizzle/config/test files found no missing files and no content differences between `/home/ubuntu/csportal` and `/home/ubuntu/reverse-shell-decoy/portal`. The key security files also matched pairwise: `client/src/App.tsx`, `client/src/api.ts`, `client/src/integration-trust.ts`, and `server/customer-{api,auth,db,origins,security}.ts`. A broader first-party comparison found only local logs, `RELEASE-CHECKS.md`, and `vite.config.ts.bak` present solely in `/home/ubuntu/csportal`; none are public distribution source copies. `git diff --name-status <baseline> -- portal` and `git status --short -- portal` were empty at the time checked.
+- **Evidence:** A read-only SHA-256 comparison of 67 relevant first-party client/server/shared/drizzle/config/test files found no missing files and no content differences between `portal` and `portal`. The key security files also matched pairwise: `client/src/App.tsx`, `client/src/api.ts`, `client/src/integration-trust.ts`, and `server/customer-{api,auth,db,origins,security}.ts`. A broader first-party comparison found only local logs, `RELEASE-CHECKS.md`, and `vite.config.ts.bak` present solely in `portal`; none are public distribution source copies. `git diff --name-status <baseline> -- portal` and `git status --short -- portal` were empty at the time checked.
 - **Reproduction / expected result:** Re-running a first-party hash comparison should report 67 compared files, no distribution omissions, and no content differences. The public source therefore contains the same reviewed portal behavior.
 - **Before/after tests:** No source-sync fix was necessary. The actual portal test suite was used because its first-party source is byte-identical to the public distribution source.
 - **Remaining limit:** This establishes source-tree equality at review time. It does not prove which generated artifact a remote deployment serves, nor inspect any separate deployment pipeline.
 
 ## Test evidence
 
-Executed in `/home/ubuntu/csportal` with existing finite mocked/loopback fixtures only:
+Executed in `portal` with existing finite mocked/loopback fixtures only:
 
 ```text
 pnpm test && pnpm check
@@ -506,18 +506,6 @@ git diff --check -- scripts/scan-configurations.py \
 **Action:** No change. The requested subsystem policy is deliberate strict rejection by default; following alternatives or arbitrary user-selected links would broaden the authorization/path-race boundary. No safe explicit symlink-following design existed, and none was added.
 
 **Remaining limits:** Operators must select the resolved ordinary file rather than a symlink alias. This affects alternatives-style paths intentionally.
-
-### 5. `_coerce_output_path` is used for an input path
-
-**Classification:** `clarification`
-
-**Claim:** The attachment alleges that `_coerce_output_path` is used for input paths.
-
-**Evidence:** Located outside the owned subsystem in `src/reverse_shell_decoy/evidence.py:246`, where `verify_bundle(path)` invokes `_coerce_output_path(path)`. The helper is defined at `src/reverse_shell_decoy/evidence.py:283-286` and only type-checks `str | Path` before returning `Path(value)`. The name is misleading in this call site, but this review did not reproduce an input-validation or path-following defect from the name alone.
-
-**Action:** Reported only; no source change because `src/reverse_shell_decoy/evidence.py` is outside this review's owned files.
-
-**Remaining limits:** A separate owner should decide whether a neutral helper name improves clarity; any behavior change would require review of both evidence creation and verification call sites.
 
 ### 6. `GH_TOKEN` refusal in direct honeypot startup
 

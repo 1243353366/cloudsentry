@@ -561,21 +561,15 @@ class DecoyServer:
             command_times.append(now)
             command_count += 1
 
-            events_before = len(session.events)
-            output = session.execute(command)
-            if len(session.events) > events_before:
-                virtual_event = session.events[-1]
+            output, virtual_event = session.execute_with_event(command)
+            if virtual_event is not None:
                 virtual_details = {
                     "blocked": virtual_event["blocked"],
                     "reason": virtual_event["reason"],
                     "output_sha256": virtual_event["output_sha256"],
                 }
             else:
-                # The simulator retains at most MAX_COMMANDS event records.  Its
-                # terminal limit response deliberately does not evict a prior
-                # event merely to record another one.  Do not misattribute that
-                # prior output metadata if this handler is ever configured above
-                # the simulator cap.
+                # When the simulator hits MAX_COMMANDS or is closed, no event is returned.
                 virtual_details = {
                     "blocked": True,
                     "reason": "virtual_command_limit" if session.closed else "virtual_audit_unavailable",

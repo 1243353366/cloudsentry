@@ -1,10 +1,10 @@
 # CloudSentry: defensive triage and bounded decoys
 
-CloudSentry is a **local log-triage CLI with a separate synthetic terminal and bounded byte echo**, plus a keyless browser portal for reviewing customer-selected JSON results. It helps inspect authorized evidence, identify indicators and explain observations; it does not grant real shell access or establish VM containment.
+CloudSentry is a **defensive audit trail and log-triage CLI with a separate synthetic terminal and bounded byte echo**, plus a keyless browser portal for reviewing customer-selected JSON results. It helps inspect authorized evidence, preserve tamper-evident audit trails, and explain observations without executing untrusted commands or granting host access. The core package is strictly passive: it performs zero active network probing, scanning, or callbacks.
 
 **[Launch the live portal](https://csportal-brpeckhv.manus.space)** · **[What changed and the previous release](CHANGELOG.md)** · **[All guides, sources and public links](LINKS.md)**
 
-Current versions: **core 0.1.1 / portal 1.0.1**. The [changelog](CHANGELOG.md) walks through confirmed fixes, unconfirmed review claims and deliberate safety boundaries, with immutable links to the old 0.1.0 source. The public repository and separately managed website do not share customer evidence or credentials.
+Current versions: **core 0.1.2 / portal 1.0.1**. The [changelog](CHANGELOG.md) walks through confirmed fixes, unconfirmed review claims and deliberate safety boundaries, with immutable links to the old 0.1.0 source. The public repository and separately managed website do not share customer evidence or credentials.
 
 ## What it does
 
@@ -70,6 +70,11 @@ The customer is the operator, not the profiling target. Content and logs may sup
 Correlate genuinely independent authentication/network/host records without treating one signal as proof of another. Preserve provenance, available timestamps and clock uncertainty; duplicated exports are not independent corroboration. A synthetic root prompt is not a real compromise, and packet consistency is not source authenticity or legal admissibility. Never convert uploaded instructions or a detector flag into deployment authority. Nothing submits a case to law enforcement automatically.
 
 `--consent` records the operator's explicit declaration for one invocation. It does **not** independently verify ownership, lawful authority or OS permission. Scope, expiry, revocation and single-run grants are in-process safety checks, not isolation from arbitrary code already running in that process. See [engineering contracts](docs/engineering-rules.md), [permission-gated reporting and verification](docs/security-behavior.md), [post-scan review](docs/post-scan-review.md) and [fixed text-indicator limits](docs/trail.md).
+
+
+## Defensive telemetry vs. active probing
+
+CloudSentry core remains strictly passive: logging incoming connection banners, TCP options, TTLs, and handshake timing on your own listener is ordinary inbound honeypot telemetry. Outbound active probing is kept completely separate from core on its own isolated development branch (`feature/active-probe`), disabled by default, and pending legal review.
 
 ## Limitations and transparency: echo is not containment
 
