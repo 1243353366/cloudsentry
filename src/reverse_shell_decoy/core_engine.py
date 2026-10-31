@@ -219,6 +219,7 @@ class ListenerIdentity:
     duration_seconds: float
     listening_state: str
     associated_connections: int = 0
+    raw_payload: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         _strict_text(self.protocol, "protocol", maximum=16)
@@ -232,9 +233,34 @@ class ListenerIdentity:
         if type(self.associated_connections) is not int or self.associated_connections < 0:
             raise EventValidationError("associated_connections must be non-negative")
         _strict_text(self.listening_state, "listening_state", maximum=32)
+        object.__setattr__(self, "raw_payload", _validate_details(self.raw_payload))
 
     def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
+        return {
+            "protocol": self.protocol, "local_address": self.local_address,
+            "local_port": self.local_port,
+            "process": None if self.process is None else self.process.to_dict(),
+            "first_observed_utc": self.first_observed_utc,
+            "last_observed_utc": self.last_observed_utc,
+            "duration_seconds": self.duration_seconds,
+            "listening_state": self.listening_state,
+            "associated_connections": self.associated_connections,
+            "raw_payload": _thaw_json(self.raw_payload),
+        }
+
+
+def extract_listener_payload(payload: Mapping[str, Any]) -> Dict[str, Any]:
+    """Safely detach a listener observation as bounded JSON data only.
+
+    This does not execute, deserialize, or collect anything from the host. It
+    preserves every supplied field, rejecting unsupported or oversized values
+    instead of silently dropping fields. Callers should include their own
+    CloudSentry listener in the inventory if it is in the observed source.
+    """
+    if not isinstance(payload, Mapping):
+        raise EventValidationError("listener payload must be a mapping")
+    frozen = _validate_details(dict(payload))
+    return _thaw_json(frozen)
 
 
 @dataclass(frozen=True)
