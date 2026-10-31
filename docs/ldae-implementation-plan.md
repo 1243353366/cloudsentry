@@ -60,3 +60,37 @@ flowchart LR
 - Full Python suite after increment: **403 tests passed**.
 - Portal tests remain unrun because Vitest dependencies were absent. No Windows test host was available; this increment contains no Windows collector.
 - Shadow Proxy protocol parsing, socket isolation, budgets, identity rotation, and integration/evidence tests remain future work; no proxy listener is included or enabled here.
+
+## Permanent development rules
+
+These are standing rules for every CloudSentry development increment:
+
+1. **Independent verification:** Every security claim needs a test.
+2. **Fail visibly:** Missing telemetry must never look like a clean system.
+3. **Least privilege:** Components get only the access they need.
+4. **Evidence integrity:** Preserve original observations separately from conclusions.
+5. **Continuous adversarial review:** Every new feature gets a failure-mode review before integration.
+
+## Increment 2: shared-core hardening
+
+Target branch: `feature/ldae-shared-core`; do not alter `main`. Authorization now requires explicit exposure or bind-address scope and can additionally constrain interface and network namespace. Evidence append coordination uses cross-process OS file locking, with state refreshed while locked. Path-only authorization is labeled and explicitly approved; PID identity has assurance levels; optional HMAC checkpoints can anchor historical journal prefixes. Listener, policy, and provenance inputs are validated. See [`ldae-shared-core-security-findings.md`](ldae-shared-core-security-findings.md) for tests and limitations.
+
+Verification in this worktree: focused shared-core suite **45 passed**, full Python suite **438 passed**. Windows lock execution and authenticated running-image collection are not verified. This increment does not include the Linux collector or Shadow Proxy.
+
+### Listener continuity and recovery acceptance criteria (future increment)
+
+Recovery is a continuity-detection workflow, not an automatic remediation loop. A future collector must:
+
+- Detect when a previously observed listener disappears and later reappears, recording the recurrence as a distinct canonical event linked to the original observation. Preserve the original action, result, and evidence; never overwrite the first observation with the recurrence.
+- Compare process identity using available PID, creation time, OS file identity, executable path, and hash provenance. Report the assurance level and explicitly mark changed, incomplete, or unavailable identity as uncertain; PID equality alone is not continuity.
+- Preserve the complete available listener payload and its collection provenance. If payloads exceed event limits, store the original as a separately bounded evidence artifact with a digest/reference and an explicit completeness/truncation status; do not silently omit fields or call partial telemetry complete. Keep raw observations distinct from derived conclusions.
+- Never automatically terminate a replacement process because an earlier process was stopped or authorized. Any response against the replacement requires fresh, scope-specific authorization and a recorded decision.
+- Emit auditable events for the action, its result, evidence references, recurrence link, and authorization basis. Tests must cover reappearance, PID reuse, missing identity fields, replacement executable/hash, incomplete payloads, separate-event preservation, and refusal to auto-kill without reauthorization.
+
+These are planned requirements, not functionality delivered by Increment 2. Increment 2 only provides shared identity assurance and evidence primitives; it does not run a persistent listener watcher or take process actions.
+
+### Shadow Proxy session-control-plane direction (future design)
+
+The Shadow Proxy, if implemented later, must control only CloudSentry-owned proxy sessions and resources, never the remote client. Unknown identity is not evidence of abuse, and IP reputation or IP allow/deny lists must not substitute for session authentication, behavior, service policy, or budgets. Session policy should distinguish configured/authorized service behavior, unknown sessions with a restricted initial capability set, behavior-based progressive constraints, policy-violation suspension/termination, and confirmed abuse with optional scoped temporary blocking. Any "allow" means an explicitly configured service capability; it does not permit arbitrary forwarding or bypass the existing non-relay requirement.
+
+Local administrative operations may include `INSPECT`, `SLEEP`, `RESUME`, `TERMINATE`, `BLOCK`, and `RELEASE`. They must be authenticated, locally scoped, auditable with actor, target session, decision, result, policy revision, and evidence references. `SLEEP` limits only CloudSentry's own synthetic responses and resource allocation; `RESUME` restores only capabilities still permitted by current policy; `BLOCK` and `RELEASE` affect only configured local admission policy and must not automatically penalize shared VPN/cloud address ranges. Unknown sessions should start with finite, non-disruptive capabilities; progressive restrictions must be based on observable behavior and explicit policy, with no deliberately expensive work. This is a design direction, not implemented functionality.

@@ -5,15 +5,19 @@ modify the host, or claim durable/tamper-proof evidence by itself.
 """
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 import enum
 import hashlib
+import hmac
+import ipaddress
 import json
 import logging
 import os
 import platform
 import re
 import threading
+import math
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -44,8 +48,26 @@ class PlatformType(str, enum.Enum):
 
 class PolicyMode(str, enum.Enum):
     PORT_ONLY = "PORT_ONLY"
-    EXECUTABLE = "EXECUTABLE"
+    EXECUTABLE_PATH_ONLY = "EXECUTABLE_PATH_ONLY"
+    # Compatibility alias; serialized decisions use the explicit path-only name.
+    EXECUTABLE = "EXECUTABLE_PATH_ONLY"
     EXECUTABLE_AND_HASH = "EXECUTABLE_AND_HASH"
+
+
+class Exposure(str, enum.Enum):
+    LOOPBACK = "LOOPBACK"
+    PRIVATE = "PRIVATE"
+    PUBLIC = "PUBLIC"
+    WILDCARD = "WILDCARD"
+    LINK_LOCAL = "LINK_LOCAL"
+    UNKNOWN = "UNKNOWN"
+
+
+class IdentityAssurance(str, enum.Enum):
+    STRONG = "STRONG"
+    PARTIAL = "PARTIAL"
+    WEAK = "WEAK"
+    UNKNOWN = "UNKNOWN"
 
 
 class EvidenceError(Exception):
@@ -166,7 +188,7 @@ def _parse_iso(value: str, field_name: str) -> dt.datetime:
 
 @dataclass(frozen=True)
 class ProcessIdentity:
-    pid: int
+    pid: Optional[int]
     ppid: Optional[int]
     executable: Optional[str]
     executable_sha256: Optional[str]
@@ -177,10 +199,11 @@ class ProcessIdentity:
     container_id: Optional[str] = None
     os_file_identity: Optional[str] = None
     hash_subject: Optional[str] = None  # path_file, running_image, or unknown
+    hash_provenance: Optional[str] = None
 
     def __post_init__(self) -> None:
-        if type(self.pid) is not int or self.pid < 0:
-            raise EventValidationError("pid must be a non-negative integer")
+        if self.pid is not None and (type(self.pid) is not int or self.pid < 0):
+            raise EventValidationError("pid must be a non-negative integer or None")
         if self.ppid is not None and (type(self.ppid) is not int or self.ppid < 0):
             raise EventValidationError("ppid must be a non-negative integer or None")
         for name in ("executable", "user", "container_id", "os_file_identity"):
@@ -195,17 +218,44 @@ class ProcessIdentity:
                 raise EventValidationError("created_time_utc must be UTC")
         if self.hash_subject not in (None, "path_file", "running_image", "unknown"):
             raise EventValidationError("invalid hash_subject")
+        if self.hash_subject == "running_image" and (self.executable_sha256 is None or self.hash_provenance is None):
+            raise EventValidationError("running-image hash requires digest and collection provenance")
+        if self.hash_provenance is not None:
+            _strict_text(self.hash_provenance, "hash_provenance", maximum=256)
+        if self.hash_subject != "running_image" and self.hash_provenance is not None:
+            raise EventValidationError("hash provenance is only valid for a running-image hash")
         _strict_text(self.privilege_level, "privilege_level", maximum=64)
         if self.authenticode_verified is not None and type(self.authenticode_verified) is not bool:
             raise EventValidationError("authenticode_verified must be bool or None")
 
     @property
-    def identity_key(self) -> Tuple[int, Optional[str], Optional[str]]:
+    def identity_key(self) -> Tuple[Optional[int], Optional[str], Optional[str]]:
         """PID plus creation time and OS file identity distinguishes reuse/replacement."""
         return (self.pid, self.created_time_utc, self.os_file_identity)
 
+    @property
+    def identity_assurance(self) -> IdentityAssurance:
+        if self.pid is None:
+            return IdentityAssurance.UNKNOWN
+        present = int(self.created_time_utc is not None) + int(self.os_file_identity is not None)
+        return IdentityAssurance.STRONG if present == 2 else IdentityAssurance.PARTIAL if present == 1 else IdentityAssurance.WEAK
+
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
+
+
+def classify_exposure(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> Exposure:
+    if address.is_unspecified:
+        return Exposure.WILDCARD
+    if address.is_loopback:
+        return Exposure.LOOPBACK
+    if address.is_link_local:
+        return Exposure.LINK_LOCAL
+    if address.is_private:
+        return Exposure.PRIVATE
+    if address.is_global:
+        return Exposure.PUBLIC
+    return Exposure.UNKNOWN
 
 
 @dataclass(frozen=True)
@@ -220,16 +270,36 @@ class ListenerIdentity:
     listening_state: str
     associated_connections: int = 0
     raw_payload: Mapping[str, Any] = field(default_factory=dict)
+    interface_identity: Optional[str] = None
+    exposure: Optional[Exposure] = None
+    network_namespace_id: Optional[str] = None
 
     def __post_init__(self) -> None:
-        _strict_text(self.protocol, "protocol", maximum=16)
+        if type(self.protocol) is not str or self.protocol.upper() not in {"TCP", "UDP"}:
+            raise EventValidationError("protocol must be TCP or UDP")
+        object.__setattr__(self, "protocol", self.protocol.upper())
         _strict_text(self.local_address, "local_address", maximum=128)
+        try:
+            parsed_address = ipaddress.ip_address(self.local_address.split("%", 1)[0])
+        except ValueError as exc:
+            raise EventValidationError("local_address must be an IP address") from exc
+        object.__setattr__(self, "local_address", str(parsed_address))
+        if self.interface_identity is not None:
+            _strict_text(self.interface_identity, "interface_identity", maximum=128)
+        if self.network_namespace_id is not None:
+            _strict_text(self.network_namespace_id, "network_namespace_id", maximum=128)
+        expected_exposure = classify_exposure(parsed_address)
+        if self.exposure is not None and self.exposure is not expected_exposure:
+            raise EventValidationError("exposure does not match local_address")
+        object.__setattr__(self, "exposure", expected_exposure)
         if type(self.local_port) is not int or not 0 <= self.local_port <= 65535:
             raise EventValidationError("local_port must be in 0..65535")
-        _parse_iso(self.first_observed_utc, "first_observed_utc")
-        _parse_iso(self.last_observed_utc, "last_observed_utc")
-        if type(self.duration_seconds) not in (int, float) or self.duration_seconds < 0:
-            raise EventValidationError("duration_seconds must be non-negative")
+        first = _parse_iso(self.first_observed_utc, "first_observed_utc")
+        last = _parse_iso(self.last_observed_utc, "last_observed_utc")
+        if last < first:
+            raise EventValidationError("last_observed_utc must not precede first_observed_utc")
+        if type(self.duration_seconds) not in (int, float) or not math.isfinite(self.duration_seconds) or self.duration_seconds < 0:
+            raise EventValidationError("duration_seconds must be finite and non-negative")
         if type(self.associated_connections) is not int or self.associated_connections < 0:
             raise EventValidationError("associated_connections must be non-negative")
         _strict_text(self.listening_state, "listening_state", maximum=32)
@@ -246,6 +316,9 @@ class ListenerIdentity:
             "listening_state": self.listening_state,
             "associated_connections": self.associated_connections,
             "raw_payload": _thaw_json(self.raw_payload),
+            "interface_identity": self.interface_identity,
+            "exposure": self.exposure.value,
+            "network_namespace_id": self.network_namespace_id,
         }
 
 
@@ -451,6 +524,10 @@ class CoreAuthorizationEngine:
             if type(raw) is not dict:
                 raise PolicyConfigurationError(f"policy {index} must be an object")
             try:
+                allowed_fields = {"policy_id", "port", "protocol", "mode", "executable", "sha256", "operator_approved", "bind_address", "exposure", "interface_identity", "network_namespace_id"}
+                unknown_fields = set(raw) - allowed_fields
+                if unknown_fields:
+                    raise PolicyConfigurationError("unknown policy fields: " + ", ".join(sorted(unknown_fields)))
                 port = raw["port"]
                 protocol = raw.get("protocol", "TCP")
                 mode = PolicyMode(raw["mode"])
@@ -469,10 +546,12 @@ class CoreAuthorizationEngine:
                         raise PolicyConfigurationError("PORT_ONLY requires engine opt-in and operator_approved=true")
                     if executable is not None or sha256 is not None:
                         raise PolicyConfigurationError("PORT_ONLY cannot specify executable or sha256")
-                elif mode is PolicyMode.EXECUTABLE:
+                elif mode is PolicyMode.EXECUTABLE_PATH_ONLY:
                     _strict_text(executable, "executable")
                     if sha256 is not None:
-                        raise PolicyConfigurationError("EXECUTABLE policy cannot specify sha256")
+                        raise PolicyConfigurationError("EXECUTABLE_PATH_ONLY policy cannot specify sha256")
+                    if not operator_approved:
+                        raise PolicyConfigurationError("EXECUTABLE_PATH_ONLY requires operator_approved=true")
                 elif mode is PolicyMode.EXECUTABLE_AND_HASH:
                     _strict_text(executable, "executable")
                     if type(sha256) is not str or not _SHA256_RE.fullmatch(sha256):
@@ -484,8 +563,33 @@ class CoreAuthorizationEngine:
                 if key in seen:
                     raise PolicyConfigurationError("duplicate authorization policy")
                 seen.add(key)
+                bind_address = raw.get("bind_address")
+                if bind_address is not None:
+                    try:
+                        bind_address = str(ipaddress.ip_address(bind_address.split("%", 1)[0]))
+                    except (ValueError, AttributeError) as exc:
+                        raise PolicyConfigurationError("bind_address must be an IP address") from exc
+                exposure = raw.get("exposure")
+                if exposure is not None:
+                    try:
+                        exposure = Exposure(exposure).value
+                    except ValueError as exc:
+                        raise PolicyConfigurationError("invalid exposure") from exc
+                if bind_address is not None and exposure is not None and classify_exposure(ipaddress.ip_address(bind_address)).value != exposure:
+                    raise PolicyConfigurationError("exposure does not match bind_address")
+                if exposure is None and bind_address is not None:
+                    exposure = classify_exposure(ipaddress.ip_address(bind_address)).value
+                if exposure is None:
+                    raise PolicyConfigurationError("every policy must specify exposure or bind_address")
+                interface_identity = raw.get("interface_identity")
+                namespace_id = raw.get("network_namespace_id")
+                for field_name, field_value in (("interface_identity", interface_identity), ("network_namespace_id", namespace_id)):
+                    if field_value is not None:
+                        _strict_text(field_value, field_name, maximum=128)
                 normalized = {"policy_id": policy_id, "port": port, "protocol": protocol.upper(), "mode": mode.value,
-                              "executable": executable, "sha256": sha256, "operator_approved": operator_approved}
+                              "executable": executable, "sha256": sha256, "operator_approved": operator_approved,
+                              "bind_address": bind_address, "exposure": exposure,
+                              "interface_identity": interface_identity, "network_namespace_id": namespace_id}
                 validated.append(MappingProxyType(normalized))
             except EventValidationError as exc:
                 raise PolicyConfigurationError(f"policy {index}: {exc}") from exc
@@ -510,17 +614,52 @@ class CoreAuthorizationEngine:
         return tuple(validated)
 
     def evaluate_listener(self, port: int, protocol: str, executable: Optional[str] = None,
-                          executable_sha256: Optional[str] = None, *, hash_subject: Optional[str] = None) -> AuthorizationDecision:
-        if type(port) is not int or not 1 <= port <= 65535 or type(protocol) is not str:
+                          executable_sha256: Optional[str] = None, *, hash_subject: Optional[str] = None,
+                          local_address: Optional[str] = None, interface_identity: Optional[str] = None,
+                          exposure: Optional[Exposure | str] = None, network_namespace_id: Optional[str] = None,
+                          hash_provenance: Optional[str] = None) -> AuthorizationDecision:
+        if type(port) is not int or not 1 <= port <= 65535 or type(protocol) is not str or protocol.upper() not in {"TCP", "UDP"}:
             raise ValueError("invalid listener port or protocol")
+        if local_address is not None:
+            try:
+                local_address = str(ipaddress.ip_address(local_address.split("%", 1)[0]))
+            except (ValueError, AttributeError) as exc:
+                raise ValueError("invalid listener local address") from exc
+        observed_exposure = classify_exposure(ipaddress.ip_address(local_address)) if local_address is not None else None
+        if exposure is not None:
+            exposure = Exposure(exposure)
+            if observed_exposure is not None and exposure is not observed_exposure:
+                return AuthorizationDecision(AuthStatus.UNKNOWN, self.policy_revision, None, None, MappingProxyType({"scope_mismatch": "exposure/address"}), "exposure does not match observed address")
+            observed_exposure = exposure
+        for field_name, value in (("interface_identity", interface_identity), ("network_namespace_id", network_namespace_id)):
+            if value is not None:
+                _strict_text(value, field_name, maximum=128)
         matching = [p for p in self._allowed_listeners if p["port"] == port and p["protocol"] == protocol.upper()]
         if not matching:
             return AuthorizationDecision(AuthStatus.UNKNOWN, self.policy_revision, None, None, MappingProxyType({}), "no matching explicit policy")
         unresolved = False
         mismatches: List[Tuple[Mapping[str, Any], Dict[str, Any]]] = []
         for policy in matching:
+            scope_mismatch = any(
+                policy[field] is not None and observed != policy[field]
+                for field, observed in (("bind_address", local_address), ("exposure", None if observed_exposure is None else observed_exposure.value),
+                                        ("interface_identity", interface_identity), ("network_namespace_id", network_namespace_id))
+            )
+            if scope_mismatch:
+                mismatches.append((policy, {"port": port, "protocol": protocol.upper(), "scope_mismatch": True}))
+                continue
+            scope_missing = any(policy[field] is not None and observed is None for field, observed in (
+                ("bind_address", local_address), ("exposure", observed_exposure),
+                ("interface_identity", interface_identity), ("network_namespace_id", network_namespace_id)))
+            if scope_missing:
+                unresolved = True
+                continue
             mode = PolicyMode(policy["mode"])
-            attrs: Dict[str, Any] = {"port": port, "protocol": protocol.upper(), "mode": mode.value}
+            attrs: Dict[str, Any] = {"port": port, "protocol": protocol.upper(), "mode": mode.value,
+                                     "local_address": local_address,
+                                     "exposure": None if observed_exposure is None else observed_exposure.value,
+                                     "interface_identity": interface_identity,
+                                     "network_namespace_id": network_namespace_id}
             if mode is PolicyMode.PORT_ONLY:
                 attrs["operator_approved"] = True
                 return AuthorizationDecision(AuthStatus.AUTHORIZED, self.policy_revision, policy["policy_id"], mode, MappingProxyType(attrs), "explicit operator-approved port-only policy")
@@ -533,10 +672,11 @@ class CoreAuthorizationEngine:
             if executable != policy["executable"]:
                 mismatches.append((policy, attrs))
                 continue
-            if mode is PolicyMode.EXECUTABLE:
+            if mode is PolicyMode.EXECUTABLE_PATH_ONLY:
                 attrs["executable"] = executable
-                return AuthorizationDecision(AuthStatus.AUTHORIZED, self.policy_revision, policy["policy_id"], mode, MappingProxyType(attrs), "configured executable path matched; loaded image identity is not proven")
-            if executable_sha256 is None or hash_subject is None:
+                attrs["verified_binary_identity"] = False
+                return AuthorizationDecision(AuthStatus.AUTHORIZED, self.policy_revision, policy["policy_id"], mode, MappingProxyType(attrs), "operator-approved path-only match; loaded image identity is not proven")
+            if executable_sha256 is None or hash_subject is None or hash_provenance is None:
                 unresolved = True
                 continue
             if type(executable_sha256) is not str or not _SHA256_RE.fullmatch(executable_sha256):
@@ -544,8 +684,14 @@ class CoreAuthorizationEngine:
                 continue
             attrs["sha256_match"] = executable_sha256.lower() == policy["sha256"].lower()
             attrs["hash_subject"] = hash_subject
+            attrs["hash_provenance"] = hash_provenance
             attrs["hash_proves_loaded_image"] = hash_subject == "running_image"
             if hash_subject != "running_image":
+                unresolved = True
+                continue
+            try:
+                attrs["hash_provenance"] = _strict_text(hash_provenance, "hash_provenance", maximum=256)
+            except (EventValidationError, TypeError):
                 unresolved = True
                 continue
             if attrs["sha256_match"]:
@@ -617,7 +763,49 @@ class EvidenceRecorder:
         self._failed = False
         self._recover()
 
+    @contextlib.contextmanager
+    def _process_lock(self):
+        lock_path = self.path.with_name(self.path.name + ".lock")
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        stream = lock_path.open("a+b")
+        try:
+            if os.name == "nt":
+                import msvcrt
+                stream.seek(0, os.SEEK_END)
+                if stream.tell() == 0:
+                    stream.write(b"0")
+                    stream.flush()
+                stream.seek(0)
+                msvcrt.locking(stream.fileno(), msvcrt.LK_LOCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+            yield
+        finally:
+            try:
+                if os.name == "nt":
+                    import msvcrt
+                    stream.seek(0)
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+            finally:
+                stream.close()
+
     def _recover(self) -> None:
+        try:
+            with self._process_lock():
+                self._refresh_state()
+        except EvidenceError:
+            raise
+        except Exception as exc:
+            raise EvidenceIntegrityError("unable to recover evidence journal") from exc
+
+    def _refresh_state(self) -> None:
+        self._sequence = 0
+        self._previous_digest = "0" * 64
+        self._event_ids.clear()
         if not self.path.exists():
             return
         try:
@@ -675,11 +863,72 @@ class EvidenceRecorder:
             return EvidenceVerification(False, seq, seq, (f"read failure: {exc}",))
         return EvidenceVerification(not errors, seq, seq, tuple(errors))
 
+    @staticmethod
+    def write_checkpoint(path: str | Path, *, sequence: int, digest: str, key: bytes, signer_id: str) -> Dict[str, Any]:
+        """Write an HMAC-signed anchor; caller must store key and checkpoint separately."""
+        if type(sequence) is not int or sequence < 0 or not _SHA256_RE.fullmatch(digest):
+            raise EvidenceIntegrityError("invalid checkpoint sequence or digest")
+        if not isinstance(key, bytes) or len(key) < 32:
+            raise EvidenceIntegrityError("checkpoint key must be at least 32 bytes")
+        _strict_text(signer_id, "signer_id", maximum=128)
+        body = {"format": "cloudsentry-checkpoint-v1", "sequence": sequence, "digest": digest, "signer_id": signer_id}
+        signature = hmac.new(key, json.dumps(body, sort_keys=True, separators=(",", ":")).encode(), hashlib.sha256).hexdigest()
+        record = {**body, "signature": signature}
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.with_name(target.name + ".tmp")
+        with temporary.open("wb") as stream:
+            stream.write(json.dumps(record, sort_keys=True, separators=(",", ":")).encode() + b"\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, target)
+        return record
+
+    @staticmethod
+    def verify_checkpoint(path: str | Path, key: bytes) -> Dict[str, Any]:
+        try:
+            record = json.loads(Path(path).read_text(encoding="utf-8"))
+            body = {key_name: record[key_name] for key_name in ("format", "sequence", "digest", "signer_id")}
+            expected = hmac.new(key, json.dumps(body, sort_keys=True, separators=(",", ":")).encode(), hashlib.sha256).hexdigest()
+            if body["format"] != "cloudsentry-checkpoint-v1" or not hmac.compare_digest(expected, record["signature"]):
+                raise ValueError("checkpoint signature mismatch")
+            if type(body["sequence"]) is not int or body["sequence"] < 0 or not _SHA256_RE.fullmatch(body["digest"]):
+                raise ValueError("invalid checkpoint fields")
+            return body
+        except Exception as exc:
+            raise EvidenceIntegrityError("checkpoint verification failed") from exc
+
+    @classmethod
+    def verify_anchored_file(cls, journal_path: str | Path, checkpoint_path: str | Path, key: bytes) -> EvidenceVerification:
+        checkpoint = cls.verify_checkpoint(checkpoint_path, key)
+        verification = cls.verify_file(journal_path)
+        if not verification.valid:
+            return verification
+        previous = "0" * 64
+        found = checkpoint["sequence"] == 0 and checkpoint["digest"] == previous
+        try:
+            with Path(journal_path).open("rb") as stream:
+                for raw in stream:
+                    item = json.loads(raw)
+                    previous = item["digest"]
+                    if item["sequence"] == checkpoint["sequence"]:
+                        found = previous == checkpoint["digest"]
+                        break
+            if not found:
+                return EvidenceVerification(False, verification.records, verification.last_sequence, ("journal does not contain independently anchored checkpoint",))
+        except OSError as exc:
+            return EvidenceVerification(False, verification.records, verification.last_sequence, (f"anchor verification read failure: {exc}",))
+        return verification
+
     def append(self, event: CanonicalEvent) -> int:
         if not isinstance(event, CanonicalEvent):
             raise TypeError("event must be a CanonicalEvent")
         with self._lock:
-            return self._append_locked(event)
+            if self._failed:
+                raise EvidenceWriteError("recorder is unhealthy after a prior write failure; reopen after verification")
+            with self._process_lock():
+                self._refresh_state()
+                return self._append_locked(event)
 
     def _append_locked(self, event: CanonicalEvent) -> int:
         if self._failed:

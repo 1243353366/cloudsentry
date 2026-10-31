@@ -1,3 +1,12 @@
+## Unreleased — LDAE shared-core security hardening
+
+- Authorization policies now require explicit bind exposure or bind address and can constrain interface and network namespace, preventing loopback rules from authorizing a public bind. Missing scope observations remain non-authorized.
+- Added cross-process journal locking and state refresh, explicit path-only executable authorization, process identity assurance levels, strict listener/policy validation, and optional HMAC-signed historical checkpoints.
+- Added regression coverage for scope mismatch, path-only identity, malformed values, PID assurance, concurrent writers, restart, and rewritten journal detection.
+- Recorded future listener-recovery acceptance criteria: linked recurrence events, process identity correlation, full available payload/evidence retention with visible truncation, action/result recording, and no automatic termination without fresh authorization. This continuity workflow is not implemented in this increment.
+- Permanent development rules are documented in `docs/ldae-implementation-plan.md`: independently test security claims, fail visibly on missing telemetry, least privilege, preserve observations separately from conclusions, and perform adversarial review before integration.
+- Limitations: Windows locking is not yet exercised on Windows; image-hash provenance remains caller-provided and is not authenticated by this core; HMAC anchors require independent custody of the key and checkpoint. No collectors, Shadow Proxy, or deployment configuration changed.
+
 # CloudSentry changelog
 
 ## Unreleased — LDAE shared-core foundation
@@ -116,3 +125,4 @@ The old release remains in Git history rather than as a second executable tree m
 - Commits `f9e72cd` and `acbf02b` added the containment limitation and its cross-reference. Commit `4dea59f` applied Apache-2.0 to original project code while preserving the auditor's MIT license and prior MIT notice/grants. None established production VM containment.
 
 Old code is preserved for reproducibility, not recommended over the corrected release. Keep incident evidence and manifest pins separate from source archives. Upgrading does not authorize collection, deployment, disclosure or remediation.
+- Captured the future Shadow Proxy control-plane direction: identity-independent session decisions, restricted starts for unknown sessions, behavior/policy-based constraints, authenticated audited local controls, and no arbitrary forwarding or action on remote clients. This design is not implemented in this increment.
