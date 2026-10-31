@@ -1,5 +1,12 @@
 # CloudSentry changelog
 
+## Unreleased — LDAE shared-core foundation
+
+- Added a platform-neutral canonical event schema with UTC/local timestamps, event and incident identifiers, collection provenance, confidence labels, synthetic-event tagging, and tri-state authorization (`AUTHORIZED`, `UNAUTHORIZED`, `UNKNOWN`).
+- Added explicit listener-authorization matching that preserves `UNKNOWN` when inventory or process identity evidence is missing. Sensitive-port membership alone is not a maliciousness determination.
+- Added an incremental LDAE audit and test plan. Windows collection, listener continuity, network intelligence, Shadow Proxy, containment, and law-enforcement export remain planned and are not claimed as implemented.
+
+
 The core Python package and browser portal have separate versions. A public source push, saved portal checkpoint, completed CI run and live publication are different events. Historical results below describe their named source scope, not production containment or every later commit.
 
 ## Core 0.1.3 / portal 1.0.1 — 2026-11-01
