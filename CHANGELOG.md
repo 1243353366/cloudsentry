@@ -42,7 +42,8 @@ collection watchdog are deliberately deferred (see `docs/observation-completenes
    read-only `NETLINK_SOCK_DIAG` dump and reports agreement, per-source-only endpoints and state
    disagreements without preferring either source. Where the kernel does not offer it, the result is
    `available: false` with a reason and `agreement: not_verified`, never a pretend match.
-9. **Documentation corrections.** The README no longer claims TTL and TCP-option telemetry that the
+9. **Dependency updates can pass CI again.** `tests/test_review8_ci.py` pinned one exact action SHA per workflow, so every Dependabot pull request failed the repository's own security test. It now checks the property (immutable commit, reviewed action allowlist, one commit per version label, no floating refs) instead of the version, which keeps the control while letting updates land.
+10. **Documentation corrections.** The README no longer claims TTL and TCP-option telemetry that the
    application layer cannot see, and the new `docs/response-boundaries.md` records the permanently refused
    capabilities (traffic interception/forced redirection, remote resource consumption, retaliation).
 
