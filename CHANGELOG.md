@@ -1,6 +1,66 @@
+## Unreleased — LDAE shared-core security hardening
+
+- Authorization policies now require explicit bind exposure or bind address and can constrain interface and network namespace, preventing loopback rules from authorizing a public bind. Missing scope observations remain non-authorized.
+- Added cross-process journal locking and state refresh, explicit path-only executable authorization, process identity assurance levels, strict listener/policy validation, and optional HMAC-signed historical checkpoints.
+- Added regression coverage for scope mismatch, path-only identity, malformed values, PID assurance, concurrent writers, restart, and rewritten journal detection.
+- Recorded future listener-recovery acceptance criteria: linked recurrence events, process identity correlation, full available payload/evidence retention with visible truncation, action/result recording, and no automatic termination without fresh authorization. This continuity workflow is not implemented in this increment.
+- Permanent development rules are documented in `docs/ldae-implementation-plan.md`: independently test security claims, fail visibly on missing telemetry, least privilege, preserve observations separately from conclusions, and perform adversarial review before integration.
+- Limitations: Windows locking is not yet exercised on Windows; image-hash provenance remains caller-provided and is not authenticated by this core; HMAC anchors require independent custody of the key and checkpoint. No collectors, Shadow Proxy, or deployment configuration changed.
+
 # CloudSentry changelog
 
+## Unreleased — LDAE shared-core foundation
+
+- Added a platform-neutral canonical event schema with UTC/local timestamps, event and incident identifiers, collection provenance, confidence labels, synthetic-event tagging, and tri-state authorization (`AUTHORIZED`, `UNAUTHORIZED`, `UNKNOWN`).
+- Added explicit listener-authorization matching that preserves `UNKNOWN` when inventory or process identity evidence is missing. Sensitive-port membership alone is not a maliciousness determination.
+- Added an incremental LDAE audit and test plan. Windows collection, listener continuity, network intelligence, Shadow Proxy, containment, and law-enforcement export remain planned and are not claimed as implemented.
+
+
 The core Python package and browser portal have separate versions. A public source push, saved portal checkpoint, completed CI run and live publication are different events. Historical results below describe their named source scope, not production containment or every later commit.
+
+## Core 0.1.3 / portal 1.0.1 — 2026-11-01
+
+Listener-assurance and inbound-pacing release. It closes the payload/banner capture and
+listener-throttle gaps reported against 0.1.2, and adds the first six observation-completeness
+items from the Increment 3 review. Behavioural classification, lineage detection and a
+collection watchdog are deliberately deferred (see `docs/observation-completeness.md`).
+
+### Walkthrough: what changes for the operator
+
+1. **Full payload capture, opt-in and bounded.** `--capture-payloads` records the complete inbound
+   record (`payload_b64`, `payload_complete`, `payload_omitted_bytes`) plus a per-session
+   `capture_sha256`/`capture_byte_count` on the close record. Previously only hashes were kept, so an
+   operator could prove a payload existed but never read it back. Capture is off by default, inbound-only,
+   same-connection, and bounded by total, per-session and per-record budgets.
+2. **Full banners in both directions.** The `connecting` record now carries the complete banner the decoy
+   presented (`banner_text`, `banner_sha256`, `banner_byte_count`, `banner_delivered`) and the peer's opening
+   bytes (`peer_greeting_b64`, `peer_greeting_sha256`, `peer_greeting_byte_count`,
+   `peer_greeting_truncated`, escaped `peer_greeting_utf8`). Greeting bytes are replayed into the session
+   through a shim, so a command split across the greeting boundary is never misparsed, and they are excluded
+   from the session stream digest so they are not hashed twice.
+3. **Every listener is throttled by default.** One shared `InboundThrottle` token bucket paces accepts and
+   admitted commands/chunks, globally and per source (IPv6 grouped by `/64`). A throttled peer is closed
+   without a response byte and without consuming the lifetime connection allowance. `backup-echo` shares a
+   single throttle across both slots. `--no-throttle` opts out.
+4. **Socket ownership race detection.** `listeners --assure` takes two independent procfs snapshots and
+   reports a binding that disappeared before the recheck, or whose owner set changed, as `UNKNOWN` instead of
+   attributing it to whichever process was seen first.
+5. **One-to-many ownership.** Every discovered PID that holds a descriptor is reported, with `parent_pid`
+   preserved and `fork_related_parent_pids` flagging descriptors inherited across `fork`.
+6. **Executable identity from the opened object.** `/proc/<pid>/exe` is opened once and hashed from that
+   descriptor, with `fstat` before and after, so `changed_during_hash`, `deleted_in_path` and
+   `identity_verified` describe the object actually read. A pathname is never treated as image identity.
+7. **Namespace and permission coverage.** Network namespaces of owner processes, the collector's own
+   namespace reference, inaccessible namespaces and permission denials are counted, and
+   `coverage.state` reports `NO_DATA`/`COMPLETE`/`PARTIAL`/`DEGRADED` with a one-sentence statement.
+   An empty result is no longer indistinguishable from a clean host.
+8. **Independent cross-verification, honestly degraded.** `--cross-verify` compares procfs against a
+   read-only `NETLINK_SOCK_DIAG` dump and reports agreement, per-source-only endpoints and state
+   disagreements without preferring either source. Where the kernel does not offer it, the result is
+   `available: false` with a reason and `agreement: not_verified`, never a pretend match.
+9. **Documentation corrections.** The README no longer claims TTL and TCP-option telemetry that the
+   application layer cannot see, and the new `docs/response-boundaries.md` records the permanently refused
+   capabilities (traffic interception/forced redirection, remote resource consumption, retaliation).
 
 ## Core 0.1.2 / portal 1.0.1 — 2026-10-31
 
@@ -65,3 +125,4 @@ The old release remains in Git history rather than as a second executable tree m
 - Commits `f9e72cd` and `acbf02b` added the containment limitation and its cross-reference. Commit `4dea59f` applied Apache-2.0 to original project code while preserving the auditor's MIT license and prior MIT notice/grants. None established production VM containment.
 
 Old code is preserved for reproducibility, not recommended over the corrected release. Keep incident evidence and manifest pins separate from source archives. Upgrading does not authorize collection, deployment, disclosure or remediation.
+- Captured the future Shadow Proxy control-plane direction: identity-independent session decisions, restricted starts for unknown sessions, behavior/policy-based constraints, authenticated audited local controls, and no arbitrary forwarding or action on remote clients. This design is not implemented in this increment.
