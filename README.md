@@ -4,7 +4,7 @@ CloudSentry is a **defensive audit trail and log-triage CLI with a separate synt
 
 **[Launch the live portal](https://csportal-brpeckhv.manus.space)** · **[What changed and the previous release](CHANGELOG.md)** · **[All guides, sources and public links](LINKS.md)**
 
-Current versions: **core 0.1.2 / portal 1.0.1**. The [changelog](CHANGELOG.md) walks through confirmed fixes, unconfirmed review claims and deliberate safety boundaries, with immutable links to the old 0.1.0 source. The public repository and separately managed website do not share customer evidence or credentials.
+Current versions: **core 0.1.3 / portal 1.0.1**. The [changelog](CHANGELOG.md) walks through confirmed fixes, unconfirmed review claims and deliberate safety boundaries, with immutable links to the old 0.1.0 source. The public repository and separately managed website do not share customer evidence or credentials.
 
 ## What it does
 
@@ -74,7 +74,11 @@ Correlate genuinely independent authentication/network/host records without trea
 
 ## Defensive telemetry vs. active probing
 
-CloudSentry core remains strictly passive: logging incoming connection banners, TCP options, TTLs, and handshake timing on your own listener is ordinary inbound honeypot telemetry. Outbound active probing is kept completely separate from core on its own isolated development branch (`feature/active-probe`), disabled by default, and pending legal review.
+CloudSentry core remains strictly passive. What the decoy listener can actually record, and therefore what this source claims, is narrower than "full packet telemetry": the observed peer endpoint, when the connection was accepted and closed, the peer's opening bytes (a client banner such as `SSH-2.0-...`), the server banner it presented, and, only when the operator opts in with `--capture-payloads`, the complete inbound payload up to a fixed byte budget. Recording what a peer sends to your own listener is ordinary inbound honeypot telemetry.
+
+Core does **not** read IP TTL values or TCP header options: those live below the application layer, and reading them would require raw sockets or packet capture, which this package deliberately does not use. It never redirects, proxies, or re-originates a visitor's traffic, and it never dials out. Outbound active probing is kept completely separate from core on its own isolated development branch (`feature/active-probe`), disabled by default, and pending legal review.
+
+Every listener the service entry point opens is **paced by default** by one shared token bucket, so a single source cannot multiply its admitted rate by opening more sessions or by hitting a second port. See [the service guide](docs/service.md) for the pacing and capture flags, and [observation completeness](docs/observation-completeness.md) for the measured-coverage listener inventory.
 
 ## Limitations and transparency: echo is not containment
 

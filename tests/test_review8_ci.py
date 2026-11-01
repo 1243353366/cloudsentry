@@ -7,40 +7,87 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-WORKFLOWS = {
-    ".github/workflows/tests.yml": (
-        "- uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4",
-        "- uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5",
-    ),
-    ".github/workflows/portal-tests.yml": (
-        "- uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4",
-        "- uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4",
-    ),
-    ".github/workflows/config-auditor-tests.yml": (
-        "- uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4",
-        "- uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5",
-    ),
-    ".github/workflows/secrets.yml": (
-        "uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6",
-        "uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3",
-    ),
+WORKFLOW_PATHS = (
+    ".github/workflows/tests.yml",
+    ".github/workflows/portal-tests.yml",
+    ".github/workflows/config-auditor-tests.yml",
+    ".github/workflows/secrets.yml",
+)
+
+# Actions this repository is allowed to run. Adding one is a deliberate change to
+# this list, which is the point: an unreviewed action cannot appear silently.
+ALLOWED_ACTIONS = {
+    "actions/checkout",
+    "actions/setup-python",
+    "actions/setup-node",
+    "gitleaks/gitleaks-action",
 }
+
+USES_RE = re.compile(r"uses:\s*([\w./-]+)@([0-9a-f]{40})\s*#\s*(\S+)\s*$")
 
 
 class CIConfigurationSecurityTests(unittest.TestCase):
     def _workflow(self, relative_path: str) -> str:
         return (ROOT / relative_path).read_text(encoding="utf-8")
 
+    def _action_references(self):
+        references = []
+        for relative_path in WORKFLOW_PATHS:
+            for line_no, line in enumerate(self._workflow(relative_path).splitlines(), 1):
+                if "uses:" not in line:
+                    continue
+                references.append((relative_path, line_no, line.strip()))
+        return references
+
     def test_all_reusable_actions_are_verified_immutable_commits(self) -> None:
-        for relative_path, expected_lines in WORKFLOWS.items():
-            contents = self._workflow(relative_path)
-            actual_lines = tuple(
-                line.strip() for line in contents.splitlines() if "uses:" in line
+        """Every action must be an immutable commit of a reviewed action.
+
+        This deliberately asserts the property rather than a pinned version list:
+        the repository enables Dependabot, so a test that names one exact SHA per
+        workflow would fail every dependency update and force the bump to be
+        merged with the check disabled.
+        """
+        references = self._action_references()
+        self.assertTrue(references, "no workflow action references were found")
+        for relative_path, line_no, line in references:
+            match = USES_RE.search(line)
+            self.assertIsNotNone(
+                match,
+                f"{relative_path}:{line_no}: expected owner/action@<40-hex sha> # <version>, got {line!r}",
             )
-            self.assertEqual(actual_lines, expected_lines, relative_path)
-            for line in actual_lines:
-                action_ref = line.split("uses: ", 1)[1].split(" #", 1)[0]
-                self.assertRegex(action_ref, r"^[\w./-]+@[0-9a-f]{40}$", line)
+            action, sha, label = match.groups()
+            self.assertIn(
+                action,
+                ALLOWED_ACTIONS,
+                f"{relative_path}:{line_no}: {action} is not a reviewed action for this repository",
+            )
+            self.assertRegex(label, r"^v\d", f"{relative_path}:{line_no}: label {label!r} is not a version")
+            self.assertNotIn(" ", sha)
+
+    def test_one_label_never_points_at_two_different_commits(self) -> None:
+        """A version comment must identify exactly one commit across all workflows."""
+        seen: dict[tuple[str, str], str] = {}
+        for relative_path, line_no, line in self._action_references():
+            match = USES_RE.search(line)
+            assert match is not None, line
+            action, sha, label = match.groups()
+            previous = seen.setdefault((action, label), sha)
+            self.assertEqual(
+                previous,
+                sha,
+                f"{relative_path}:{line_no}: {action} {label} is pinned to two different commits",
+            )
+
+    def test_no_floating_action_refs_remain(self) -> None:
+        for relative_path in WORKFLOW_PATHS:
+            for line_no, line in enumerate(self._workflow(relative_path).splitlines(), 1):
+                if "uses:" not in line:
+                    continue
+                self.assertNotRegex(
+                    line,
+                    r"uses:\s*[\w./-]+@(main|master|v\d+\s*$)",
+                    f"{relative_path}:{line_no}: floating action reference {line.strip()!r}",
+                )
 
     def test_pre_commit_secret_hook_is_immutable_and_redacts(self) -> None:
         contents = (ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8")

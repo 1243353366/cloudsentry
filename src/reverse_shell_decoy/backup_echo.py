@@ -19,6 +19,7 @@ from typing import Any
 from .authorization import (AuthorizationError, AuthorizationGrant, AuthorizationScope,
                             cancellation_guard, request_authorization)
 from .honeypot import DecoyServer
+from .throttle import InboundThrottle
 
 _CREDENTIAL_NAMES = frozenset({
     "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_PROFILE",
@@ -31,6 +32,12 @@ _SERVICE_LIMITS = {
     "idle_timeout": 2, "session_timeout": 5, "audit_limit": 32,
     "max_runtime": 30, "max_input_bytes_total": 4096, "max_output_bytes_total": 4096,
     "max_session_input_bytes": 2048, "commands_per_second": 1,
+}
+# One object paces both slots, so the pair cannot be used to double the admitted
+# inbound rate or to reset a bucket by hopping between ports.
+_PACING_LIMITS = {
+    "connects_per_second": 4, "connects_per_second_per_peer": 2,
+    "units_per_second": 4, "units_per_second_per_peer": 2,
 }
 
 
@@ -91,9 +98,10 @@ async def run_backup_echo(bindings: EchoBindings, *, authorization: Authorizatio
             raise ValueError("credential-bearing environment refused")
         # Copy the validated immutable values; no input bytes can mutate configuration.
         selected = EchoBindings(bindings.host, bindings.operator_port, bindings.visitor_port, bindings.allow_public)
+        throttle = InboundThrottle(**_PACING_LIMITS)
         for port in (selected.operator_port, selected.visitor_port):
             authorization.check(expected)
-            service = DecoyServer(response_mode="mirror", **_SERVICE_LIMITS)
+            service = DecoyServer(response_mode="mirror", throttle=throttle, **_SERVICE_LIMITS)
             services.append(service)
             server = await service.start(host=selected.host, port=port, allow_public=selected.allow_public)
             authorization.check(expected)
@@ -119,6 +127,10 @@ async def run_backup_echo(bindings: EchoBindings, *, authorization: Authorizatio
                 "vm_provisioned": False, "vm_isolation_verified": False,
                 "external_routing_configured": False, "restarted": False,
                 "limits_per_slot": dict(_SERVICE_LIMITS),
+                "pacing": {"shared_across_slots": True, "limits": dict(_PACING_LIMITS),
+                           "counters": throttle.snapshot()["counters"],
+                           "denied_connections": sum(service._throttle_denials for service in services)},
+                "payload_capture": False,
                 "aggregate_admitted_input_bytes": sum(item["usage"]["input_bytes_total"] for item in snapshots),
                 "aggregate_reserved_output_bytes": sum(item["usage"]["output_bytes_total"] for item in snapshots)}
     finally:
