@@ -2,6 +2,46 @@
 
 The core Python package and browser portal have separate versions. A public source push, saved portal checkpoint, completed CI run and live publication are different events. Historical results below describe their named source scope, not production containment or every later commit.
 
+## Core 0.1.4 — 2026-11-01
+
+Observer-integrity release. Adds four capabilities and one honest limit: what the host says
+about its own policy, what actually answers on loopback, what returns after it disappears, and
+what a deliberately obvious decoy sees. 438 to 549 tests.
+
+1. **Policy divergence (`policy`).** Reads `nft -j list ruleset`, falling back to
+   `iptables-save`/`ip6tables-save`, or on Windows `netsh advfirewall` and
+   `Get-NetFirewallProfile`, plus network-namespace coverage, and compares it with
+   CloudSentry's stated intent. Findings are `DEFAULT_INBOUND_ACCEPT`,
+   `DECOY_PORT_REACHABLE`, `UNEXPECTED_INBOUND_ALLOW` (divergence) and `FILTER_UNREADABLE`,
+   `PARTIAL_VISIBILITY`, `NAMESPACE_SPLIT` (observation gaps). Verdicts are `MATCH`,
+   `DIVERGENT`, `PARTIAL`, `UNKNOWN`. No rule is changed; `all_clear` is always `false`.
+2. **Stated trust limit.** A sufficiently privileged attacker can modify both the packet filter
+   and the tools that read it, so a host-based observer cannot guarantee trustworthy visibility
+   after complete host compromise. Every policy report carries that limitation and a rotation
+   recommendation rather than a clean bill of health.
+3. **Loopback scan (`scan-loopback`).** Bounded connect scan that refuses non-loopback targets
+   by construction, reports `COMPLETE`/`PARTIAL` with `unscanned_ports` counted, and
+   cross-checks the procfs inventory: `answering_not_bound`, `bound_but_not_answering`,
+   `bound_but_not_scanned`. No service probing, no OS fingerprinting, no raw sockets.
+4. **Listener watchdog (`watchdog`).** Bounded snapshots diffed into `BINDING_APPEARED`,
+   `BINDING_DISAPPEARED`, `BINDING_CHANGED` and `BINDING_REAPPEARED`, with recurrence linked to
+   the first sighting and a replacement on the same binding reported as a change rather than as
+   continuity. It never acts: `action: none`, `requires_authorization: true`,
+   `terminates_processes: false` on every event and report.
+5. **Synthetic decoy fleet (`synthetic`).** Three obviously fake services whose banners state
+   that nothing is executed, authenticated or stored. Records interaction shape
+   (credential/command/exploit/fingerprint labels, arrival timing, first-line hash), never
+   intent or skill, and tags every record `synthetic: true` / `not_host_activity: true` so
+   `exclude_synthetic()` keeps the decoy's own invitations out of real-activity counts.
+6. **Loopback relay (`relay`).** A rotating front that forwards the same received connection to
+   a loopback decoy, bounces the backend banner back, fingerprints the visitor's opening bytes
+   passively, and refuses non-loopback targets unless explicitly allowed. Rotation is recorded
+   with both presentations named. `no_third_party_transit` is asserted on every record. The
+   README's earlier blanket "never proxies" sentence was corrected to describe this precisely.
+
+Deliberately not built: any relay to a remote host, any inbound-traffic reassembly across
+sessions, and any automatic response to a returning listener.
+
 ## Core 0.1.3 / portal 1.0.1 — 2026-11-01
 
 Listener-assurance and inbound-pacing release. It closes the payload/banner capture and

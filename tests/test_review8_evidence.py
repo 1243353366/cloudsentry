@@ -20,8 +20,9 @@ class EvidenceVersionMetadataTests(unittest.TestCase):
         metadata = (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
 
         self.assertRegex(__version__, r"^\d+\.\d+\.\d+$")
-        self.assertEqual(evidence.TOOL_VERSION, "0.1.3")
-        self.assertEqual(__version__, "0.1.3")
+        # Compare the two sources to each other rather than to a literal, so a
+        # release bump does not require editing this test as well.
+        self.assertEqual(evidence.TOOL_VERSION, __version__)
         self.assertIn('dynamic = ["version"]', metadata)
         self.assertIn(
             'version = {attr = "reverse_shell_decoy.__version__"}', metadata

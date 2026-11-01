@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import os
 import sys
@@ -160,6 +161,86 @@ def parser() -> argparse.ArgumentParser:
         action="store_true",
         help="request an independent NETLINK_SOCK_DIAG comparison (reports unavailable if unsupported)",
     )
+    scan_loopback_parser = sub.add_parser(
+        "scan-loopback",
+        help="bounded connect scan of loopback ports only; no remote targets, no fingerprinting",
+    )
+    scan_loopback_parser.add_argument(
+        "--ports", default="1-1024", help="port spec such as 22,80 or 1-1024 (default: 1-1024)"
+    )
+    scan_loopback_parser.add_argument(
+        "--timeout", type=float, default=0.25, help="per-port connect timeout in seconds (default 0.25)"
+    )
+    scan_loopback_parser.add_argument(
+        "--deadline", type=float, default=30.0, help="total scan budget in seconds (default 30)"
+    )
+    scan_loopback_parser.add_argument(
+        "--pacing-ms", type=int, default=0, help="optional delay between attempts in milliseconds"
+    )
+    scan_loopback_parser.add_argument(
+        "--cross-check",
+        action="store_true",
+        help="also read the listener inventory and report disagreements between the two views",
+    )
+    watchdog_parser = sub.add_parser(
+        "watchdog",
+        help="repeated bounded listener snapshots with recurrence links; never terminates anything",
+    )
+    watchdog_parser.add_argument("--observations", type=int, default=5, help="snapshot count (default 5)")
+    watchdog_parser.add_argument(
+        "--interval", type=float, default=2.0, help="seconds between snapshots (default 2)"
+    )
+    watchdog_parser.add_argument(
+        "--deadline", type=float, default=120.0, help="total watching budget in seconds (default 120)"
+    )
+    synthetic_parser = sub.add_parser(
+        "synthetic",
+        help="serve obviously fake synthetic services on loopback and record interaction patterns only",
+    )
+    synthetic_parser.add_argument(
+        "--runtime", type=float, default=60.0, help="how long to serve before stopping (default 60s)"
+    )
+    synthetic_parser.add_argument(
+        "--services", default="all", help="comma-separated service names, or 'all' (default all)"
+    )
+    synthetic_parser.add_argument(
+        "--full-payloads",
+        action="store_true",
+        help="also record the bytes a visitor sent to this synthetic service",
+    )
+    synthetic_parser.add_argument(
+        "--allow-public",
+        action="store_true",
+        help="bind beyond loopback; requires independently reviewed infrastructure",
+    )
+    policy = sub.add_parser(
+        "policy",
+        help="compare effective nftables/iptables or Windows firewall state with CloudSentry's intent; changes nothing",
+    )
+    policy.add_argument(
+        "--decoy-ports", default="22022,22080,26379", help="ports CloudSentry decoys may use (default decoy set)"
+    )
+    policy.add_argument(
+        "--expected-ports", default="", help="inbound ports you deliberately opened, comma separated"
+    )
+    policy.add_argument(
+        "--reviewed-public-ports", default="", help="decoy ports whose public exposure was reviewed"
+    )
+    relay = sub.add_parser(
+        "relay",
+        help="front loopback decoys through a rotating proxy, capture banners and fingerprint the opening bytes",
+    )
+    relay.add_argument(
+        "--targets", required=True, help="loopback backends as host:port,host:port (remote targets are refused)"
+    )
+    relay.add_argument("--front-port", type=int, default=0, help="front listen port (default: ephemeral)")
+    relay.add_argument("--runtime", type=float, default=60.0, help="seconds to serve (default 60)")
+    relay.add_argument(
+        "--rotate-every", type=int, default=3, help="rotate presentation every N connections (default 3)"
+    )
+    relay.add_argument(
+        "--full-payloads", action="store_true", help="also record the bytes the visitor sent"
+    )
     persist = sub.add_parser("persistence", help="read-only startup/backdoor indicators, not a malware verdict")
     persist.add_argument("--root", action="append", help="authorized config directory to inspect; default cron/systemd roots")
     ingest = sub.add_parser("ingest", help="normalize pasted or explicitly selected real logs locally")
@@ -224,6 +305,45 @@ def pasted_cloud_content(marker: str) -> str:
     raise ValueError("paste record limit exceeded")
 
 
+async def _run_relay(fleet, runtime: float) -> int:
+    """Serve the rotating front until the runtime elapses, then print the record."""
+
+    await fleet.start()
+    print(
+        "relay front listening on 127.0.0.1:%d for %.0fs; targets must be loopback"
+        % (fleet.bound_port, runtime),
+        file=sys.stderr,
+    )
+    try:
+        await asyncio.sleep(runtime)
+    except asyncio.CancelledError:
+        pass
+    finally:
+        await fleet.stop("runtime elapsed")
+    print(json.dumps(fleet.as_dict(), indent=2, sort_keys=True))
+    return 0
+
+
+async def _run_synthetic(fleet, runtime: float) -> int:
+    """Serve the synthetic fleet until the runtime elapses, then print the record."""
+
+    await fleet.start()
+    ports = ", ".join(str(port) for port in fleet.bound_ports)
+    print(
+        "serving synthetic decoy services on %s for %.0fs; every banner states it is synthetic"
+        % (ports or "no ports", runtime),
+        file=sys.stderr,
+    )
+    try:
+        await asyncio.sleep(runtime)
+    except asyncio.CancelledError:
+        pass
+    finally:
+        await fleet.stop("runtime elapsed")
+    print(json.dumps(fleet.as_dict(), indent=2, sort_keys=True))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
@@ -270,6 +390,93 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 from .listeners import scan_listeners
                 emit_scan(scan_listeners(), args.command)
+        elif args.command == "scan-loopback":
+            from .listeners import scan_listeners
+            from .loopback_scan import cross_check_inventory, parse_port_spec, scan_loopback
+
+            result = scan_loopback(
+                parse_port_spec(args.ports),
+                timeout=args.timeout,
+                deadline_seconds=args.deadline,
+                pacing_delay_ms=args.pacing_ms,
+            )
+            payload = result.as_dict()
+            if args.cross_check:
+                payload["cross_check"] = cross_check_inventory(result, scan_listeners())
+            emit_scan(payload, args.command)
+        elif args.command == "watchdog":
+            from .watchdog import ListenerWatchdog
+
+            emit_scan(
+                ListenerWatchdog(
+                    max_observations=args.observations,
+                    min_interval_seconds=args.interval,
+                    deadline_seconds=args.deadline,
+                ).run(args.observations),
+                args.command,
+            )
+        elif args.command == "synthetic":
+            from .synthetic import DEFAULT_SERVICES, SyntheticFleet
+            from .throttle import InboundThrottle
+
+            if args.services.strip().lower() == "all":
+                selected = DEFAULT_SERVICES
+            else:
+                wanted = {name.strip().lower() for name in args.services.split(",") if name.strip()}
+                selected = tuple(
+                    service for service in DEFAULT_SERVICES if service.name.lower() in wanted
+                )
+                if not selected:
+                    print("no synthetic service matched the requested names", file=sys.stderr)
+                    return 2
+            fleet = SyntheticFleet(
+                selected,
+                throttle=InboundThrottle(),
+                capture_payloads=args.full_payloads,
+                allow_public=args.allow_public,
+                max_runtime=args.runtime,
+                host="0.0.0.0" if args.allow_public else "127.0.0.1",
+            )
+            return asyncio.run(_run_synthetic(fleet, args.runtime))
+        elif args.command == "policy":
+            from .loopback_scan import parse_port_spec
+            from .policy import PolicyIntent, policy_report
+
+            intent = PolicyIntent(
+                decoy_ports=parse_port_spec(args.decoy_ports) if args.decoy_ports.strip() else (),
+                expected_inbound_ports=parse_port_spec(args.expected_ports)
+                if args.expected_ports.strip()
+                else (),
+                reviewed_public_ports=parse_port_spec(args.reviewed_public_ports)
+                if args.reviewed_public_ports.strip()
+                else (),
+            )
+            emit_scan(policy_report(intent), args.command)
+        elif args.command == "relay":
+            from .relay import RelayFleet, RelayTarget
+            from .throttle import InboundThrottle
+
+            targets = []
+            for item in args.targets.split(","):
+                if not item.strip():
+                    continue
+                host, _, port_text = item.strip().partition(":")
+                if not port_text.isdigit():
+                    print("targets must be written as host:port", file=sys.stderr)
+                    return 2
+                targets.append(RelayTarget(f"{host}:{port_text}", host, int(port_text)))
+            if not targets:
+                print("at least one loopback target is required", file=sys.stderr)
+                return 2
+            fleet = RelayFleet(
+                targets,
+                port=args.front_port,
+                throttle=InboundThrottle(),
+                rotate_every_connections=args.rotate_every,
+                capture_payloads=args.full_payloads,
+                max_runtime=args.runtime,
+            )
+            return asyncio.run(_run_relay(fleet, args.runtime))
         elif args.command == "persistence":
             from .persistence import scan_persistence
             emit_scan(scan_persistence(args.root), args.command)
