@@ -161,6 +161,19 @@ class ListenerPacingTests(unittest.IsolatedAsyncioTestCase):
     def _reasons(self, service: DecoyServer) -> list[str]:
         return [event.get("reason") for event in service.audit if event["event_type"] == "close"]
 
+    async def _wait_until(self, predicate, message: str, timeout: float = 2.0) -> None:
+        """Poll the event loop instead of assuming a handler already ran.
+
+        An accepted-then-refused connection is handled by its own task, so a fixed
+        sleep is a race under load; waiting on the observable condition is not.
+        """
+        deadline = asyncio.get_running_loop().time() + timeout
+        while asyncio.get_running_loop().time() < deadline:
+            if predicate():
+                return
+            await asyncio.sleep(0.01)
+        raise AssertionError(message)
+
     async def test_one_listener_refuses_a_fast_connection_burst(self) -> None:
         clock = _Clock()
         throttle = InboundThrottle(connects_per_second=10, connects_per_second_per_peer=1,
@@ -173,9 +186,10 @@ class ListenerPacingTests(unittest.IsolatedAsyncioTestCase):
 
         for _ in range(3):
             await self._connect(port)
-        with contextlib.suppress(ConnectionError, OSError):
-            await asyncio.sleep(0)
-        self.assertEqual(service._throttle_denials, 3)
+        await self._wait_until(
+            lambda: service._throttle_denials == 3,
+            "expected three refusals, saw %d" % service._throttle_denials,
+        )
         self.assertEqual(self._reasons(service).count("peer_connect_rate"), 3)
         # Throttled peers never consume the lifetime connection allowance.
         self.assertEqual(service.connection_count, 1)
@@ -192,9 +206,11 @@ class ListenerPacingTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(b"Maintenance console", await asyncio.wait_for(reader.readuntil(b"# "), timeout=1))
         await self._connect(second_port)
 
-        await asyncio.sleep(0.05)
+        await self._wait_until(
+            lambda: second_service._throttle_denials == 1,
+            "second listener did not refuse the shared-budget peer",
+        )
         self.assertEqual(first_service._throttle_denials, 0)
-        self.assertEqual(second_service._throttle_denials, 1)
         self.assertEqual(self._reasons(second_service), ["global_connect_rate"])
 
     async def test_command_units_are_paced_per_source(self) -> None:
@@ -214,7 +230,10 @@ class ListenerPacingTests(unittest.IsolatedAsyncioTestCase):
         await writer.drain()
         self.assertEqual(await asyncio.wait_for(reader.read(), timeout=1), b"")
 
-        await asyncio.sleep(0.05)
+        await self._wait_until(
+            lambda: any(event.get("throttled") is True for event in service.audit),
+            "throttled command record was not written",
+        )
         throttled = [event for event in service.audit if event.get("throttled") is True]
         self.assertEqual(len(throttled), 1)
         self.assertEqual(throttled[0]["event_type"], "command")
