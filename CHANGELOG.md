@@ -2,6 +2,50 @@
 
 The core Python package and browser portal have separate versions. A public source push, saved portal checkpoint, completed CI run and live publication are different events. Historical results below describe their named source scope, not production containment or every later commit.
 
+## Core 0.1.3 / portal 1.0.1 — 2026-11-01
+
+Listener-assurance and inbound-pacing release. It closes the payload/banner capture and
+listener-throttle gaps reported against 0.1.2, and adds the first six observation-completeness
+items from the Increment 3 review. Behavioural classification, lineage detection and a
+collection watchdog are deliberately deferred (see `docs/observation-completeness.md`).
+
+### Walkthrough: what changes for the operator
+
+1. **Full payload capture, opt-in and bounded.** `--capture-payloads` records the complete inbound
+   record (`payload_b64`, `payload_complete`, `payload_omitted_bytes`) plus a per-session
+   `capture_sha256`/`capture_byte_count` on the close record. Previously only hashes were kept, so an
+   operator could prove a payload existed but never read it back. Capture is off by default, inbound-only,
+   same-connection, and bounded by total, per-session and per-record budgets.
+2. **Full banners in both directions.** The `connecting` record now carries the complete banner the decoy
+   presented (`banner_text`, `banner_sha256`, `banner_byte_count`, `banner_delivered`) and the peer's opening
+   bytes (`peer_greeting_b64`, `peer_greeting_sha256`, `peer_greeting_byte_count`,
+   `peer_greeting_truncated`, escaped `peer_greeting_utf8`). Greeting bytes are replayed into the session
+   through a shim, so a command split across the greeting boundary is never misparsed, and they are excluded
+   from the session stream digest so they are not hashed twice.
+3. **Every listener is throttled by default.** One shared `InboundThrottle` token bucket paces accepts and
+   admitted commands/chunks, globally and per source (IPv6 grouped by `/64`). A throttled peer is closed
+   without a response byte and without consuming the lifetime connection allowance. `backup-echo` shares a
+   single throttle across both slots. `--no-throttle` opts out.
+4. **Socket ownership race detection.** `listeners --assure` takes two independent procfs snapshots and
+   reports a binding that disappeared before the recheck, or whose owner set changed, as `UNKNOWN` instead of
+   attributing it to whichever process was seen first.
+5. **One-to-many ownership.** Every discovered PID that holds a descriptor is reported, with `parent_pid`
+   preserved and `fork_related_parent_pids` flagging descriptors inherited across `fork`.
+6. **Executable identity from the opened object.** `/proc/<pid>/exe` is opened once and hashed from that
+   descriptor, with `fstat` before and after, so `changed_during_hash`, `deleted_in_path` and
+   `identity_verified` describe the object actually read. A pathname is never treated as image identity.
+7. **Namespace and permission coverage.** Network namespaces of owner processes, the collector's own
+   namespace reference, inaccessible namespaces and permission denials are counted, and
+   `coverage.state` reports `NO_DATA`/`COMPLETE`/`PARTIAL`/`DEGRADED` with a one-sentence statement.
+   An empty result is no longer indistinguishable from a clean host.
+8. **Independent cross-verification, honestly degraded.** `--cross-verify` compares procfs against a
+   read-only `NETLINK_SOCK_DIAG` dump and reports agreement, per-source-only endpoints and state
+   disagreements without preferring either source. Where the kernel does not offer it, the result is
+   `available: false` with a reason and `agreement: not_verified`, never a pretend match.
+9. **Documentation corrections.** The README no longer claims TTL and TCP-option telemetry that the
+   application layer cannot see, and the new `docs/response-boundaries.md` records the permanently refused
+   capabilities (traffic interception/forced redirection, remote resource consumption, retaliation).
+
 ## Core 0.1.2 / portal 1.0.1 — 2026-10-31
 
 Maintenance and hardening release addressing Review 8 items across collectors, honeypot session auditing, launcher configuration, portal regression testing, and CI dependency automation.

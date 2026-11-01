@@ -140,7 +140,26 @@ def parser() -> argparse.ArgumentParser:
     response.add_argument("--confirm-owned", action="store_true")
     sub.add_parser("scan", help="read-only Linux shell/socket suspicion snapshot as JSON")
     sub.add_parser("os", help="read-only limited OS details of this computer")
-    sub.add_parser("listeners", help="read-only Linux TCP listeners and UDP bindings; no port probes")
+    listeners = sub.add_parser(
+        "listeners", help="read-only Linux TCP listeners and UDP bindings; no port probes"
+    )
+    listeners.add_argument(
+        "--assure",
+        action="store_true",
+        help=(
+            "add measured observation completeness: ownership recheck, executable "
+            "identity, namespace coverage, permission accounting and an optional "
+            "read-only netlink cross-check"
+        ),
+    )
+    listeners.add_argument(
+        "--no-recheck", action="store_true", help="take a single snapshot instead of two"
+    )
+    listeners.add_argument(
+        "--cross-verify",
+        action="store_true",
+        help="request an independent NETLINK_SOCK_DIAG comparison (reports unavailable if unsupported)",
+    )
     persist = sub.add_parser("persistence", help="read-only startup/backdoor indicators, not a malware verdict")
     persist.add_argument("--root", action="append", help="authorized config directory to inspect; default cron/systemd roots")
     ingest = sub.add_parser("ingest", help="normalize pasted or explicitly selected real logs locally")
@@ -239,8 +258,18 @@ def main(argv: list[str] | None = None) -> int:
             from .evidence import os_info
             emit_scan(os_info(), args.command)
         elif args.command == "listeners":
-            from .listeners import scan_listeners
-            emit_scan(scan_listeners(), args.command)
+            if args.assure:
+                from .observation import collect_snapshot
+                emit_scan(
+                    collect_snapshot(
+                        recheck=not args.no_recheck,
+                        cross_verify=args.cross_verify,
+                    ),
+                    args.command,
+                )
+            else:
+                from .listeners import scan_listeners
+                emit_scan(scan_listeners(), args.command)
         elif args.command == "persistence":
             from .persistence import scan_persistence
             emit_scan(scan_persistence(args.root), args.command)
