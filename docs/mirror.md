@@ -10,7 +10,9 @@ The clean-environment launcher excludes inherited credentials. Loopback is the d
 
 ## What is reflected
 
-Within the quota, the received byte chunk is returned unchanged, including newlines or binary bytes. This is a 1:1 echo, not a generated command, interpreted shell program, script, base64 stage, or loop. No banner or prompt is sent in mirror mode. Input is never passed to Bash, `eval`, `exec`, `nc`, `socat SYSTEM`, a subprocess or a network destination selected by the visitor.
+Within the quota, the received byte chunk is returned unchanged, including newlines or binary bytes. This is a 1:1 echo, not a generated command, interpreted shell program, script, base64 stage, or loop. No banner or prompt is sent in mirror mode. With `--capture-payloads` the operator additionally receives each inbound chunk in
+`payload_b64` with `payload_complete`/`payload_omitted_bytes`, still on the same connection and still within
+the capture byte budget. Input is never passed to Bash, `eval`, `exec`, `nc`, `socat SYSTEM`, a subprocess or a network destination selected by the visitor.
 
 Raw bytes exist transiently in a bounded memory buffer. Operator audit contains session metadata, byte counts and chunk digests, not raw transcripts, credentials, SSH keys or command arguments. There is no raw capture to `/tmp` or another directory. To show a synthetic computer rather than plain data echo, use the default console mode of `scripts/start-honeypot.sh`: it provides allowlisted virtual commands, files, root/admin presentation and processes, all in memory.
 
