@@ -36,6 +36,55 @@ Operator notices/audit are written to stderr. If you preserve this stream, choos
 
 The clean-environment launcher discards inherited variables, including cloud credentials. Direct service CLI startup refuses known credential variable names. Do not supply credentials or mount credential files into the service image. If the operator audit stream fails, the service stops accepting work rather than silently continuing without visibility.
 
+## Shared inbound pacing
+
+Every listener the service CLI starts is throttled by default. One `InboundThrottle`
+holds token buckets that decide whether another connection or another command/chunk is
+admitted right now. It opens no socket and sends nothing; a refused peer is closed
+without receiving a byte.
+
+- `--max-connects-per-second` (default 32) is the listener-wide accept ceiling across all peers.
+- `--max-connects-per-second-per-peer` (default 8) caps one source. IPv4 peers are keyed by exact
+  address, IPv6 peers by `/64`, so rotating through a subnet does not reset a bucket.
+- `--max-units-per-second` (default 64) and `--max-units-per-second-per-peer` (default 16) cap admitted
+  commands or mirror chunks.
+- `--no-throttle` disables pacing. That is not recommended, and the pacing counters are still reported.
+
+Burst capacity defaults to twice the rate so short interactive sessions are not penalized. A throttled
+connection costs one audit record with `reason: peer_connect_rate` or `global_connect_rate` and is
+**not** counted against the lifetime connection allowance, so a flood cannot consume the session quota
+it is already being refused. The peer table is bounded by `max_tracked_peers`; when it is full, new
+sources are refused rather than evicting a peer that is already throttled. `backup-echo` shares a single
+throttle across both of its slots for the same reason.
+
+Pacing is application-layer admission control. It does not replace OS-level SYN flood protection,
+firewall policy, egress restriction or billing limits, and it does not slow or tarpit a remote host.
+
+## Full payload and banner capture (opt-in)
+
+By default the service keeps hashes only. With `--capture-payloads` it records the inbound record itself
+for the operator's own review:
+
+- `payload_b64` holds the complete inbound record, `payload_complete` says whether it fits the budget, and
+  `payload_omitted_bytes` states exactly how much was not captured.
+- `peer_greeting_*` fields in the `connecting` record hold the peer's opening bytes: base64, SHA-256,
+  byte count, whether the cap was reached, and a printable escaped view.
+- `banner_sha256`, `banner_byte_count` and `banner_text` record the complete banner the decoy presented.
+- The `close` record carries `capture_sha256` and `capture_byte_count` for the captured session stream, so a
+  reader can verify the exact bytes they are holding. The greeting is reported separately and excluded from
+  that stream digest, because those bytes are replayed into the session.
+
+Budgets: `--capture-bytes-total` (1 MiB), `--capture-session-bytes` (64 KiB), `--capture-record-bytes`
+(4096, always at least one full inbound line) and `--capture-greeting-bytes` (512, `0` disables greeting
+reads). Exhausting a budget stops further capture and marks the session `capture_truncated`; it does not
+stop the session. `--capture-greeting-grace` (default 0.25s) bounds the wait for a peer's opening burst, so
+a silent peer delays nothing else.
+
+Capture is inbound-only, same-connection, bounded and opt-in. It is not a packet capture, it proves nothing
+about a peer's identity, and captured payloads can contain third-party personal data or credentials that a
+visitor typed. Treat a captured payload as sensitive evidence: keep it in private storage with a retention
+limit, do not commit it, and check your own jurisdiction's rules before retaining visitor content.
+
 ## Minimal container, not an egress firewall
 
 ```sh
