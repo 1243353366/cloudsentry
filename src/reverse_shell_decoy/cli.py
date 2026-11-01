@@ -113,7 +113,9 @@ def add_optional_names(p: argparse.ArgumentParser) -> None:
 
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Local incident-response triage and a networkless decoy lab.")
-    p.add_argument("--version", action="version", version="reverse-shell-decoy 0.1.0")
+    from . import __version__
+
+    p.add_argument("--version", action="version", version=f"reverse-shell-decoy {__version__}")
     sub = p.add_subparsers(dest="command", required=True)
     cloud = sub.add_parser("cloud", help="analyze explicitly pasted/exported cloud logs; no credentials or account access")
     cloud.add_argument("--provider", required=True, choices=["cloudflare", "aws", "render", "railway"])

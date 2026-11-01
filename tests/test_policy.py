@@ -323,5 +323,23 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(observation.platform, "windows")
 
 
+class CliVersionTests(unittest.TestCase):
+    def test_cli_reports_the_package_version(self) -> None:
+        import subprocess
+        import sys
+
+        from reverse_shell_decoy import __version__
+
+        completed = subprocess.run(
+            [sys.executable, "-m", "reverse_shell_decoy", "--version"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 0)
+        self.assertIn(__version__, completed.stdout)
+        self.assertNotIn("0.1.0", completed.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()
