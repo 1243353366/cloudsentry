@@ -1,7 +1,10 @@
 """Deterministic tests for the observation-completeness layer.
 
 Fixtures are ordinary temporary directories that mimic the procfs layout the
-collector reads; no test inspects the real host or opens a network listener.
+collector reads, and no test opens a network listener. A few tests pass the real
+``/proc`` path because their owners are fabricated pids, which is only safe
+because namespace discovery is stubbed in those tests: otherwise a runner's own
+live processes decide the coverage verdict and the result depends on the host.
 """
 from __future__ import annotations
 
@@ -126,7 +129,9 @@ class OwnershipTests(ObservationFixture):
     def test_binding_that_disappears_before_recheck_is_unknown_not_unauthorized(self):
         first = snapshot([listener(8080, 41, owners=[{"pid": 100, "comm": "server"}])])
         second = snapshot([])
-        with patch("reverse_shell_decoy.observation.scan_listeners", side_effect=[first, second]):
+        with patch("reverse_shell_decoy.observation.scan_listeners", side_effect=[first, second]), patch(
+            "reverse_shell_decoy.observation._namespace_reference", return_value="ns:fixture"
+        ):
             result = collect_snapshot("/proc", cross_verify=False)
 
         entry = result["listeners"][0]
@@ -139,7 +144,9 @@ class OwnershipTests(ObservationFixture):
     def test_owner_change_between_snapshots_is_reported(self):
         first = snapshot([listener(8080, 41, owners=[{"pid": 100, "comm": "server"}])])
         second = snapshot([listener(8080, 41, owners=[{"pid": 555, "comm": "replacement"}])])
-        with patch("reverse_shell_decoy.observation.scan_listeners", side_effect=[first, second]):
+        with patch("reverse_shell_decoy.observation.scan_listeners", side_effect=[first, second]), patch(
+            "reverse_shell_decoy.observation._namespace_reference", return_value="ns:fixture"
+        ):
             result = collect_snapshot("/proc", cross_verify=False)
 
         entry = result["listeners"][0]
@@ -160,12 +167,27 @@ class OwnershipTests(ObservationFixture):
         self.assertEqual(result["coverage"]["ownership_ratio"], 0.0)
         self.assertEqual(result["coverage"]["state"], COVERAGE_PARTIAL)
 
+    def test_live_process_with_unreadable_namespace_degrades_coverage(self):
+        """A process that is present but whose namespace link cannot be read is a real gap."""
+
+        first = snapshot([listener(8080, 41, owners=[{"pid": 100, "comm": "server"}])])
+        with patch("reverse_shell_decoy.observation.scan_listeners", side_effect=[first, first]), patch(
+            "reverse_shell_decoy.observation._namespace_reference", return_value=None
+        ), patch("reverse_shell_decoy.observation.os.path.isdir", return_value=True):
+            result = collect_snapshot("/proc", cross_verify=False)
+
+        self.assertEqual(result["coverage"]["namespaces_inaccessible"], 1)
+        self.assertEqual(result["coverage"]["state"], COVERAGE_DEGRADED)
+        self.assertIn("namespace", result["coverage"]["statement"].lower())
+
     def test_permission_warnings_degrade_coverage(self):
         first = snapshot(
             [listener(8080, 41, owners=[{"pid": 100, "comm": "server"}])],
             warnings=["permission denied while reading process file descriptors"],
         )
-        with patch("reverse_shell_decoy.observation.scan_listeners", side_effect=[first, first]):
+        with patch("reverse_shell_decoy.observation.scan_listeners", side_effect=[first, first]), patch(
+            "reverse_shell_decoy.observation._namespace_reference", return_value="ns:fixture"
+        ):
             result = collect_snapshot("/proc", cross_verify=False)
 
         self.assertEqual(result["listeners"][0]["ownership"]["state"], "DEGRADED")
