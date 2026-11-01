@@ -5,7 +5,8 @@ import unittest
 from reverse_shell_decoy.core_engine import (
     AuthStatus, CanonicalEvent, ConfidenceLevel, CoreAuthorizationEngine,
     PolicyMode, PolicyConfigurationError, EventValidationError,
-    JsonEventLogger, EvidenceRecorder, EvidenceWriteError,
+    JsonEventLogger, EvidenceRecorder, EvidenceWriteError, EvidenceError,
+    EvidenceIntegrityError, MAX_JOURNAL_LINE_BYTES,
     ListenerIdentity, ProcessIdentity, extract_listener_payload,
     Exposure, IdentityAssurance,
 )
@@ -445,6 +446,127 @@ class Increment2HardeningTests(unittest.TestCase):
             self.assertEqual(2, reopened.append(CanonicalEvent.create(event_type="after", collection_source="test", confidence=ConfidenceLevel.OBSERVED, authorization=AuthStatus.UNKNOWN)))
 
 
+
+
+class EvidenceJournalHardeningTests(unittest.TestCase):
+    """Regressions for path, budget and cost defects in the evidence journal."""
+
+    def make_event(self, **overrides):
+        payload = dict(
+            event_type="listener_snapshot",
+            collection_source="unit-test",
+            confidence=ConfidenceLevel.OBSERVED,
+            authorization=AuthStatus.UNKNOWN,
+            host_id="host-hardening-01",
+        )
+        payload.update(overrides)
+        return CanonicalEvent.create(**payload)
+
+    def test_lock_file_is_owner_only(self):
+        import os
+        import stat
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "events.jsonl"
+            recorder = EvidenceRecorder(str(path))
+            recorder.append(self.make_event())
+            lock = Path(str(path) + ".lock")
+            self.assertTrue(lock.exists())
+            mode = stat.S_IMODE(os.stat(lock).st_mode)
+            self.assertEqual(0o600, mode)
+
+    def test_planted_lock_symlink_is_refused_and_target_is_untouched(self):
+        import os
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp:
+            victim = Path(tmp) / "victim.txt"
+            victim.write_text("do not touch", encoding="utf-8")
+            path = Path(tmp) / "events.jsonl"
+            os.symlink(victim, Path(str(path) + ".lock"))
+            with self.assertRaises(EvidenceError):
+                EvidenceRecorder(str(path))
+            self.assertEqual("do not touch", victim.read_text(encoding="utf-8"))
+
+    def test_repeated_appends_do_not_reverify_the_whole_journal(self):
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "events.jsonl"
+            first = EvidenceRecorder(str(path))
+            first.append(self.make_event())
+            with patch.object(
+                EvidenceRecorder, "verify_file", wraps=EvidenceRecorder.verify_file
+            ) as spy:
+                # Reopening an existing journal verifies it exactly once; further
+                # appends by the same recorder must not re-read the whole file.
+                recorder = EvidenceRecorder(str(path))
+                for _ in range(6):
+                    recorder.append(self.make_event())
+                self.assertEqual(1, spy.call_count)
+                self.assertEqual(7, recorder._sequence)
+
+    def test_external_change_is_still_detected_on_next_append(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "events.jsonl"
+            recorder = EvidenceRecorder(str(path))
+            recorder.append(self.make_event())
+            with path.open("ab") as stream:
+                stream.write(b'{"tampered": true}\n')
+            # External mutation is detected on the next append and keeps failing,
+            # rather than being appended after silently.
+            with self.assertRaises(EvidenceError):
+                recorder.append(self.make_event())
+            with self.assertRaises(EvidenceError):
+                recorder.append(self.make_event())
+
+    def test_oversized_journal_line_fails_verification_instead_of_being_read(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "events.jsonl"
+            path.write_bytes(b"{" + b"x" * (MAX_JOURNAL_LINE_BYTES + 10) + b"}\n")
+            verification = EvidenceRecorder.verify_file(path)
+            self.assertFalse(verification.valid)
+            self.assertIn("exceeds", verification.errors[0])
+
+    def test_checkpoint_write_refuses_a_planted_temporary_symlink(self):
+        import os
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp:
+            victim = Path(tmp) / "victim.txt"
+            victim.write_text("do not touch", encoding="utf-8")
+            target = Path(tmp) / "checkpoint.json"
+            os.symlink(victim, Path(str(target) + ".tmp"))
+            with self.assertRaises(EvidenceIntegrityError):
+                EvidenceRecorder.write_checkpoint(
+                    target, sequence=1, digest="a" * 64, key=b"k" * 32, signer_id="tester"
+                )
+            self.assertEqual("do not touch", victim.read_text(encoding="utf-8"))
+
+    def test_checkpoint_round_trip_is_owner_only_and_bounded(self):
+        import os
+        import stat
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "checkpoint.json"
+            written = EvidenceRecorder.write_checkpoint(
+                target, sequence=3, digest="b" * 64, key=b"k" * 32, signer_id="tester"
+            )
+            self.assertEqual(written["sequence"], 3)
+            self.assertEqual(0o600, stat.S_IMODE(os.stat(target).st_mode))
+            self.assertEqual(
+                3, EvidenceRecorder.verify_checkpoint(target, b"k" * 32)["sequence"]
+            )
+            target.write_bytes(b"{" + b"y" * (70 * 1024))
+            with self.assertRaises(EvidenceIntegrityError):
+                EvidenceRecorder.verify_checkpoint(target, b"k" * 32)
 
 if __name__ == "__main__":
     unittest.main()

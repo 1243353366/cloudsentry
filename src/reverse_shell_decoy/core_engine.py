@@ -91,6 +91,8 @@ class PolicyConfigurationError(ValueError):
 
 
 MAX_TEXT = 512
+MAX_JOURNAL_LINE_BYTES = 1024 * 1024
+MAX_CHECKPOINT_BYTES = 64 * 1024
 MAX_DETAILS_BYTES = 64 * 1024
 MAX_DETAILS_DEPTH = 8
 MAX_DETAIL_ITEMS = 2048
@@ -761,13 +763,33 @@ class EvidenceRecorder:
         self._event_ids = set()
         self._lock = threading.Lock()
         self._failed = False
+        self._verified_signature: Optional[Tuple[int, int, int]] = None
         self._recover()
 
     @contextlib.contextmanager
     def _process_lock(self):
         lock_path = self.path.with_name(self.path.name + ".lock")
         lock_path.parent.mkdir(parents=True, exist_ok=True)
-        stream = lock_path.open("a+b")
+        # The lock path lives in a directory an operator may not control. Opening
+        # it with O_NOFOLLOW and 0600 stops a pre-planted symlink from redirecting
+        # the lock (and, on some platforms, truncating a foreign file) and keeps
+        # the lock from being world-readable.
+        flags = os.O_CREAT | os.O_RDWR
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        if hasattr(os, "O_CLOEXEC"):
+            flags |= os.O_CLOEXEC
+        try:
+            lock_fd = os.open(lock_path, flags, 0o600)
+        except OSError as exc:
+            raise EvidenceError("unable to open evidence lock file") from exc
+        try:
+            if hasattr(os, "fchmod"):
+                os.fchmod(lock_fd, 0o600)
+            stream = os.fdopen(lock_fd, "a+b")
+        except OSError as exc:
+            os.close(lock_fd)
+            raise EvidenceError("unable to use evidence lock file") from exc
         try:
             if os.name == "nt":
                 import msvcrt
@@ -802,11 +824,29 @@ class EvidenceRecorder:
         except Exception as exc:
             raise EvidenceIntegrityError("unable to recover evidence journal") from exc
 
+    def _journal_signature(self) -> Tuple[int, int, int]:
+        """Cheap identity of the journal file, used to skip redundant verification."""
+        try:
+            stat_result = self.path.stat()
+        except OSError:
+            return (0, 0, 0)
+        return (int(stat_result.st_ino), int(stat_result.st_size), int(stat_result.st_mtime_ns))
+
     def _refresh_state(self) -> None:
+        """Re-read journal state, verifying in full only when the file moved.
+
+        A full re-verification on every append is quadratic in the number of
+        records and holds the cross-process lock for the whole read, so it is only
+        done when the file's inode, size, or mtime changed since it was last read.
+        """
+        if self._verified_signature is not None and self._journal_signature() == self._verified_signature:
+            return
         self._sequence = 0
         self._previous_digest = "0" * 64
         self._event_ids.clear()
+        self._verified_signature = None
         if not self.path.exists():
+            self._verified_signature = (0, 0, 0)
             return
         try:
             verification = self.verify_file(self.path)
@@ -818,6 +858,7 @@ class EvidenceRecorder:
                     self._event_ids.add(record["event"]["event_id"])
                     self._sequence = record["sequence"]
                     self._previous_digest = record["digest"]
+            self._verified_signature = self._journal_signature()
         except EvidenceError:
             raise
         except Exception as exc:
@@ -832,6 +873,11 @@ class EvidenceRecorder:
         try:
             with Path(path).open("rb") as stream:
                 for line_no, raw in enumerate(stream, 1):
+                    if len(raw) > MAX_JOURNAL_LINE_BYTES:
+                        errors.append(
+                            f"line {line_no}: record exceeds {MAX_JOURNAL_LINE_BYTES} bytes"
+                        )
+                        break
                     if not raw.endswith(b"\n"):
                         errors.append(f"line {line_no}: incomplete record (possible interrupted write)")
                         break
@@ -877,17 +923,41 @@ class EvidenceRecorder:
         target = Path(path)
         target.parent.mkdir(parents=True, exist_ok=True)
         temporary = target.with_name(target.name + ".tmp")
-        with temporary.open("wb") as stream:
-            stream.write(json.dumps(record, sort_keys=True, separators=(",", ":")).encode() + b"\n")
-            stream.flush()
-            os.fsync(stream.fileno())
+        payload = json.dumps(record, sort_keys=True, separators=(",", ":")).encode() + b"\n"
+        flags = os.O_CREAT | os.O_WRONLY | os.O_TRUNC
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        if hasattr(os, "O_CLOEXEC"):
+            flags |= os.O_CLOEXEC
+        # O_NOFOLLOW keeps a pre-planted symlink at the temporary path from
+        # redirecting the checkpoint write; 0600 keeps the anchor owner-only.
+        try:
+            descriptor = os.open(temporary, flags, 0o600)
+        except OSError as exc:
+            raise EvidenceIntegrityError("unable to open checkpoint temporary file") from exc
+        try:
+            if hasattr(os, "fchmod"):
+                os.fchmod(descriptor, 0o600)
+            written = os.write(descriptor, payload)
+            if written != len(payload):
+                raise EvidenceIntegrityError("short checkpoint write")
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
         os.replace(temporary, target)
         return record
 
     @staticmethod
     def verify_checkpoint(path: str | Path, key: bytes) -> Dict[str, Any]:
         try:
-            record = json.loads(Path(path).read_text(encoding="utf-8"))
+            checkpoint_path = Path(path)
+            with checkpoint_path.open("rb") as stream:
+                raw = stream.read(MAX_CHECKPOINT_BYTES + 1)
+            if len(raw) > MAX_CHECKPOINT_BYTES:
+                raise ValueError("checkpoint file exceeds size limit")
+            record = json.loads(raw.decode("utf-8"))
+            if not isinstance(record, dict):
+                raise ValueError("checkpoint must be a JSON object")
             body = {key_name: record[key_name] for key_name in ("format", "sequence", "digest", "signer_id")}
             expected = hmac.new(key, json.dumps(body, sort_keys=True, separators=(",", ":")).encode(), hashlib.sha256).hexdigest()
             if body["format"] != "cloudsentry-checkpoint-v1" or not hmac.compare_digest(expected, record["signature"]):
@@ -961,6 +1031,7 @@ class EvidenceRecorder:
             self._sequence = sequence
             self._previous_digest = digest
             self._event_ids.add(event.event_id)
+            self._verified_signature = self._journal_signature()
             return sequence
         except EvidenceWriteError:
             raise
