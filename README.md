@@ -76,7 +76,9 @@ Correlate genuinely independent authentication/network/host records without trea
 
 CloudSentry core remains strictly passive. What the decoy listener can actually record, and therefore what this source claims, is narrower than "full packet telemetry": the observed peer endpoint, when the connection was accepted and closed, the peer's opening bytes (a client banner such as `SSH-2.0-...`), the server banner it presented, and, only when the operator opts in with `--capture-payloads`, the complete inbound payload up to a fixed byte budget. Recording what a peer sends to your own listener is ordinary inbound honeypot telemetry.
 
-Core does **not** read IP TTL values or TCP header options: those live below the application layer, and reading them would require raw sockets or packet capture, which this package deliberately does not use. It never redirects, proxies, or re-originates a visitor's traffic, and it never dials out. Outbound active probing is kept completely separate from core on its own isolated development branch (`feature/active-probe`), disabled by default, and pending legal review.
+Core does **not** read IP TTL values or TCP header options: those live below the application layer, and reading them would require raw sockets or packet capture, which this package deliberately does not use. It never redirects, proxies, or re-originates a visitor's traffic, and it never dials out. Every listener the service entry point opens is paced by default by one shared token bucket, so a single source cannot multiply its admitted rate by opening more sessions or by hitting a second port. See [the service guide](docs/service.md) and [observation completeness](docs/observation-completeness.md).
+
+Outbound active probing is kept separate from core on its own branch (`feature/active-probe`), disabled by default, and pending legal review. That branch currently contains **documentation of the boundary only: there is no probe implementation in it**. This README does not claim a capability the tree cannot demonstrate; see [active probe boundary](#active-probe-boundary-unreviewed-and-not-implemented) below.
 
 Every listener the service entry point opens is **paced by default** by one shared token bucket, so a single source cannot multiply its admitted rate by opening more sessions or by hitting a second port. See [the service guide](docs/service.md) for the pacing and capture flags, and [observation completeness](docs/observation-completeness.md) for the measured-coverage listener inventory.
 
@@ -120,3 +122,35 @@ PYTHONPATH=src python3 -m unittest discover -s tests -v
 The current [review findings](docs/review-8-findings.md) distinguish reproduced defects, deliberate boundaries, tested claims and remaining gaps. The [changelog](CHANGELOG.md) keeps previous releases and test scopes separate. A triage tool can miss short-lived, hidden, encrypted or namespace-isolated activity; neither a positive indicator nor an empty report is definitive. See [SECURITY.md](SECURITY.md), [trust model](docs/threat-model.md) and [secret-scanning requirements](docs/secret-scanning.md). Job failure blocks merging only when a separate repository ruleset requires the check; no branch-protection claim is implied.
 
 Original CloudSentry code and documentation are **[Apache-2.0](LICENSE)** except where component notices apply. The bundled auditor remains **MIT-licensed** under its unchanged [upstream license](integrations/config-auditor/LICENSE). Dependencies and assets retain their terms. [NOTICE](NOTICE) preserves attribution; [licenses/MIT-legacy.txt](licenses/MIT-legacy.txt) preserves the previous root notice and does not withdraw existing grants.
+
+## Active probe boundary (unreviewed and not implemented)
+
+This branch exists to hold a boundary, not to ship a scanner. **There is no outbound
+probe, resolver, SYN/connect helper or banner grabber in this tree.** The only commits
+here that touch product text are documentation changes; `git ls-tree` on the branch shows
+the same modules as `main`.
+
+If a probe is ever implemented, it must satisfy every one of these before it can be
+described as available, and none of them may be relaxed by configuration:
+
+- **Off by default, per-invocation consent.** No background, periodic, or automatic run. No
+  probe starts from a scan finding, a portal login, or an install step.
+- **Authorized targets only.** An explicit operator declaration of ownership or written
+  authorization, recorded with the invocation, and a documented scope limit. `--consent`
+  records a declaration; it cannot verify ownership.
+- **Bounded and non-interactive.** A single connection attempt per target with a short
+  deadline and a fixed byte cap, resolution restricted to public address space. No payload,
+  no command, no service interaction, no retry storm, no fan-out across ranges.
+- **No interception and no resource consumption on the far side.** The probe must not
+  redirect, relay, tunnel, proxy, spoof or capture a third party's session, and it must not
+  exist to make a remote party spend resources. Those are permanently out of scope in
+  [response boundaries](docs/response-boundaries.md).
+- **Auditable and answerable.** Every attempt recorded with actor, target, authorization
+  reference and result, so the operator can answer "what did you scan" with evidence.
+- **Legal review before merge.** Written review by counsel for the operator's jurisdiction,
+  not a code comment asserting legality.
+
+Anything that reads a peer's traffic, forces a peer to connect to us, or deliberately costs
+a third party CPU, bandwidth or money is refused rather than deferred. The decoy's whole
+interaction model is: listen on an address you bound, answer the socket the visitor opened,
+and close within a fixed budget.
